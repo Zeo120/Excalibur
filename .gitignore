@@ -1,0 +1,43 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Excalibur Workspaces & Databases
+*.excalibur
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Dynamic MITM Certificates & Private Keys
+certs/
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# Environment & Local Secrets
+.env
+.env.*
+!.env.example
+
+# Logs & Dumps
+*.log
+dumps/
+captures/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+.DS_Store
