@@ -1,19 +1,19 @@
-# ⚔️ Excalibur
+# Excalibur
 
 > **The Developer & Penetration Testing Browser**  
 > *Independent, non-Chromium browser architecture with dual Native GUI and Terminal TUI interfaces.*
 
 ---
 
-## ⚡ Overview
+## Overview
 
 **Excalibur** is a standalone, security-first browser and protocol inspection workbench written in 100% pure Rust. Engineered specifically for penetration testers, security researchers, and web developers, Excalibur combines low-level protocol inspection, live request interception, script analysis, and multi-view rendering into a single, high-performance binary.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
-- **Independent Engine**: Zero Chromium / WebKit dependency. Custom parsing and rendering pipeline with full inspection of every DOM node, script hook, and network frame.
+- **Independent Engine**: Zero Chromium or WebKit dependency. Custom parsing and rendering pipeline with full inspection of every DOM node, script hook, and network frame.
 - **Dual Interface Modes**:
   - **Premium Native GUI**: Hardware-accelerated (`egui` / `wgpu`) workstation featuring dockable tabs, interactive DOM tree explorer, multi-view canvas, and visual security badges.
   - **Full-Screen Terminal TUI**: Keyboard-driven (`ratatui`) interface for SSH sessions, headless environments, and terminal workflows.
@@ -29,7 +29,7 @@
 
 ---
 
-## 🛠️ Architecture
+## Architecture
 
 ```
 excalibur/
@@ -46,6 +46,6 @@ excalibur/
 
 ---
 
-## 📜 License
+## License
 
 MIT License. Designed and maintained by [Zeo120](https://github.com/Zeo120).
