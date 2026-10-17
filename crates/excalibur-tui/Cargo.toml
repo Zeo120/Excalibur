@@ -1,0 +1,16 @@
+[package]
+name = "excalibur-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+excalibur-core = { path = "../excalibur-core" }
+excalibur-dom = { path = "../excalibur-dom" }
+excalibur-audit = { path = "../excalibur-audit" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

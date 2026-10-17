@@ -1,0 +1,16 @@
+[package]
+name = "excalibur-dom"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }
+selectors = { workspace = true }
+kuchiki = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,25 @@
+[package]
+name = "excalibur-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "excalibur"
+path = "src/main.rs"
+
+[dependencies]
+excalibur-core = { path = "../excalibur-core" }
+excalibur-proxy = { path = "../excalibur-proxy" }
+excalibur-dom = { path = "../excalibur-dom" }
+excalibur-script = { path = "../excalibur-script" }
+excalibur-audit = { path = "../excalibur-audit" }
+excalibur-tui = { path = "../excalibur-tui" }
+excalibur-gui = { path = "../excalibur-gui" }
+clap = { workspace = true }
+tokio = { workspace = true }
+eframe = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
