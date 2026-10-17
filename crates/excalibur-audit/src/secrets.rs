@@ -12,9 +12,19 @@ pub struct SecretScanner {
 impl SecretScanner {
     pub fn new() -> Self {
         let patterns = vec![
-            ("Generic API Key", Regex::new(r#"(?i)(?:api_key|apikey|secret)[ =:"']{1,4}([a-zA-Z0-9_\-]{16,64})"#).unwrap()),
-            ("AWS Access Key ID", Regex::new(r#"(AKIA[0-9A-Z]{16})"#).unwrap()),
-            ("Bearer Token", Regex::new(r#"(?i)bearer\s+([a-zA-Z0-9_\-\.]{20,})"#).unwrap()),
+            (
+                "Generic API Key",
+                Regex::new(r#"(?i)(?:api_key|apikey|secret)[ =:"']{1,4}([a-zA-Z0-9_\-]{16,64})"#)
+                    .unwrap(),
+            ),
+            (
+                "AWS Access Key ID",
+                Regex::new(r#"(AKIA[0-9A-Z]{16})"#).unwrap(),
+            ),
+            (
+                "Bearer Token",
+                Regex::new(r#"(?i)bearer\s+([a-zA-Z0-9_\-\.]{20,})"#).unwrap(),
+            ),
         ];
         Self { patterns }
     }

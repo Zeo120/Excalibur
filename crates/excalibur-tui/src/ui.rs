@@ -17,7 +17,12 @@ pub fn render_ui(f: &mut Frame, app: &TuiApp) {
         ])
         .split(f.area());
 
-    let tab_titles = vec!["[1] Browser", "[2] Inspector", "[3] Repeater", "[4] Scanner"];
+    let tab_titles = vec![
+        "[1] Browser",
+        "[2] Inspector",
+        "[3] Repeater",
+        "[4] Scanner",
+    ];
     let tab_index = match app.active_tab {
         ActiveTab::Browser => 0,
         ActiveTab::Inspector => 1,
@@ -26,7 +31,11 @@ pub fn render_ui(f: &mut Frame, app: &TuiApp) {
     };
 
     let tabs = Tabs::new(tab_titles)
-        .block(Block::default().borders(Borders::ALL).title(" ⚔️ Excalibur "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" ⚔️ Excalibur "),
+        )
         .select(tab_index)
         .style(Style::default().fg(Color::Cyan))
         .highlight_style(
@@ -40,7 +49,9 @@ pub fn render_ui(f: &mut Frame, app: &TuiApp) {
     let body = Paragraph::new(body_text).block(Block::default().borders(Borders::ALL));
     f.render_widget(body, chunks[1]);
 
-    let status = Paragraph::new(Span::raw(" [q] Quit  [Tab] Switch Tab  [r] Repeat  [i] Intercept "))
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    let status = Paragraph::new(Span::raw(
+        " [q] Quit  [Tab] Switch Tab  [r] Repeat  [i] Intercept ",
+    ))
+    .style(Style::default().bg(Color::DarkGray).fg(Color::White));
     f.render_widget(status, chunks[2]);
 }
