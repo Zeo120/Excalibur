@@ -144,3 +144,27 @@ fn test_tls_builder_options() {
     let verifier = PermissiveCertVerifier::new(true);
     assert!(verifier.bypass_verification);
 }
+
+#[tokio::test]
+async fn test_resilient_connect_and_dns_fallback() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let port = addr.port();
+
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 4];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream.write_all(b"PONG").await;
+        }
+    });
+
+    let mut stream =
+        excalibur_core::connect_tcp_resilient("127.0.0.1", port, std::time::Duration::from_secs(3))
+            .await
+            .unwrap();
+    stream.write_all(b"PING").await.unwrap();
+    let mut resp = [0u8; 4];
+    stream.read_exact(&mut resp).await.unwrap();
+    assert_eq!(&resp, b"PONG");
+}

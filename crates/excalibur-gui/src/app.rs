@@ -199,7 +199,7 @@ impl GuiApp {
             tabs: Vec::new(),
             active_tab_id: 1,
             next_tab_id: 2,
-            omnibox_input: "https://example.com".to_string(),
+            omnibox_input: "excalibur://newtab".to_string(),
             browser_renderer: BrowserRenderer::new(),
 
             tab_nav_layout: initial_layout,
@@ -227,10 +227,10 @@ impl GuiApp {
             egui_ctx: Some(cc.egui_ctx.clone()),
         };
 
-        // Create initial tab and load default page
-        let initial_tab = BrowserTab::new(1, "https://example.com");
+        // Create initial tab and load default Start Page
+        let initial_tab = BrowserTab::new(1, "excalibur://newtab");
         app.tabs.push(initial_tab);
-        app.navigate(1, "https://example.com");
+        app.navigate(1, "excalibur://newtab");
 
         app
     }

@@ -7,7 +7,6 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use url::Url;
 
@@ -119,7 +118,12 @@ impl HttpClient {
                     .host_str()
                     .ok_or_else(|| CoreError::Http("Invalid upstream proxy host".to_string()))?;
                 let p_port = proxy_url.port().unwrap_or(8080);
-                let mut p_stream = TcpStream::connect((p_host, p_port)).await?;
+                let mut p_stream = crate::dns::connect_tcp_resilient(
+                    p_host,
+                    p_port,
+                    std::time::Duration::from_secs(self.options.timeout_seconds),
+                )
+                .await?;
 
                 if scheme == "https" {
                     // Send HTTP CONNECT tunnel request to proxy
@@ -144,7 +148,14 @@ impl HttpClient {
                 }
                 p_stream
             }
-            None => TcpStream::connect((host, port)).await?,
+            None => {
+                crate::dns::connect_tcp_resilient(
+                    host,
+                    port,
+                    std::time::Duration::from_secs(self.options.timeout_seconds),
+                )
+                .await?
+            }
         };
 
         let path_and_query = match parsed_url.query() {

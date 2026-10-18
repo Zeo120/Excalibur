@@ -2078,6 +2078,15 @@ impl BrowserRenderer {
         videos: &[YouTubeVideoItem],
         action: &mut Option<BrowserAction>,
     ) {
+        let query_str = if let Some(pos) = url.find("search_query=") {
+            let q_part = &url[pos + 13..];
+            let end = q_part.find('&').unwrap_or(q_part.len());
+            let raw_q = &q_part[..end];
+            raw_q.replace('+', " ").replace("%20", " ")
+        } else {
+            String::new()
+        };
+
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -2122,6 +2131,11 @@ impl BrowserRenderer {
                                         .input_states
                                         .entry("yt_hub_search".to_string())
                                         .or_default();
+
+                                    // If empty, auto-populate from URL query_str
+                                    if yt_search_val.is_empty() && !query_str.is_empty() {
+                                        *yt_search_val = query_str.clone();
+                                    }
 
                                     let te = ui.add(
                                         egui::TextEdit::singleline(yt_search_val)
@@ -2247,15 +2261,25 @@ impl BrowserRenderer {
                                 .inner_margin(Margin::symmetric(24, 20))
                                 .show(ui, |ui| {
                                     ui.vertical_centered(|ui| {
+                                        let headline = if !query_str.is_empty() {
+                                            format!("YouTube Search: \"{}\"", query_str)
+                                        } else {
+                                            "Explore YouTube on Excalibur".to_string()
+                                        };
                                         ui.label(
-                                            RichText::new("Explore YouTube on Excalibur")
+                                            RichText::new(headline)
                                                 .size(20.0)
                                                 .strong()
                                                 .color(Color32::from_rgb(240, 246, 252)),
                                         );
                                         ui.add_space(6.0);
+                                        let subtitle = if !query_str.is_empty() {
+                                            "No direct streams matched this exact query. Try refining your keywords or launch a quick topic below:".to_string()
+                                        } else {
+                                            "Search for any topic above or choose a category below to browse videos.".to_string()
+                                        };
                                         ui.label(
-                                            RichText::new("Search for any topic above or choose a category below to browse videos.")
+                                            RichText::new(subtitle)
                                                 .size(13.0)
                                                 .color(Color32::from_rgb(148, 163, 184)),
                                         );
@@ -2594,6 +2618,46 @@ pub fn extract_youtube_videos(html: &str) -> Vec<YouTubeVideoItem> {
         }
         search_from = start_idx + 13;
     }
+
+    // Fallback: extract /watch?v= links if JSON parsing returned no items
+    if videos.is_empty() {
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut idx = 0;
+        while let Some(rel) = html[idx..].find("/watch?v=") {
+            let start = idx + rel + 9;
+            if start + 11 <= html.len() {
+                let id = &html[start..start + 11];
+                if id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                    && seen_ids.insert(id.to_string())
+                {
+                    let title = if let Some(title_start) = html[..idx + rel].rfind("title=\"") {
+                        let after = &html[title_start + 7..];
+                        if let Some(q_end) = after.find('"') {
+                            after[..q_end].to_string()
+                        } else {
+                            format!("YouTube Video ({})", id)
+                        }
+                    } else {
+                        format!("YouTube Video ({})", id)
+                    };
+
+                    videos.push(YouTubeVideoItem {
+                        id: id.to_string(),
+                        title,
+                        channel: "YouTube Creator".to_string(),
+                        duration: "Video".to_string(),
+                        views: "Popular".to_string(),
+                        published: "Available".to_string(),
+                        thumbnail_url: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", id),
+                    });
+                }
+            }
+            idx = start;
+        }
+    }
+
     videos
 }
 
@@ -2645,6 +2709,12 @@ fn collect_videos_from_json(val: &serde_json::Value, videos: &mut Vec<YouTubeVid
                 }
             } else if let Some(cvr) = map.get("compactVideoRenderer").and_then(|v| v.as_object()) {
                 if let Some(item) = parse_video_renderer(cvr) {
+                    if !videos.iter().any(|existing| existing.id == item.id) {
+                        videos.push(item);
+                    }
+                }
+            } else if let Some(rir) = map.get("reelItemRenderer").and_then(|v| v.as_object()) {
+                if let Some(item) = parse_video_renderer(rir) {
                     if !videos.iter().any(|existing| existing.id == item.id) {
                         videos.push(item);
                     }
