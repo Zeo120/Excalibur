@@ -200,3 +200,24 @@ This document provides exhaustive explanations and justifications for every arch
    * Strict dependency graphs prevent spaghetti code. For example, `excalibur-core` cannot accidentally depend on `excalibur-gui`, ensuring that headless CLI subcommands remain lean and completely free of GUI graphics dependencies.
 3. **Isolated Test Suites**:
    * Each crate maintains its own unit and integration tests, enabling fast, parallelized test execution locally and in CI.
+
+---
+
+## 10. Modern Daily Browser vs. Penetration Testing "X-Mode" Toggle
+
+### Evaluated Alternatives
+* **Always-Exposed Penetration Testing UI**: Launching with Burp-like dense grids, hex dumps, and interception buttons occupying 70% of the screen at all times.
+* **Pure Clean Consumer Browser**: Hiding or severely restricting penetration testing tools behind deep sub-menus or external windows.
+* **Modal View Switcher with X-Mode Toggle**: Defaulting to a modern, clean web browser layout (multi-tab browsing, omnibox, visual DOM rendering) with a single, high-visibility menu toggle (`[ X-MODE ]`) that instantly exposes the full penetration testing workbench.
+
+### Decision
+**A dual-state Modern Browser with an instant X-Mode Penetration Testing Workbench Toggle.**
+
+### Rationale
+1. **Uncluttered Daily Browsing Experience**:
+   * Modern security research requires exploring and interacting with web applications naturally (clicking links, filling forms, observing layout and behavior) before diving into protocol interception. An overly cluttered UI impairs web application workflow and navigation.
+2. **Instant On-Demand Weaponization**:
+   * When a researcher identifies a suspicious endpoint, form, or script, clicking `[ X-MODE ]` on the menu bar instantly docks or reveals the entire security workbench (Traffic Interceptor, Request Repeater, Vulnerability Radar, DOM and QuickJS Sink Inspector, and MITM Proxy Manager) without restarting or reloading the session.
+3. **Flexible Screen Real Estate**:
+   * X-Mode supports both a bottom Split Drawer (allowing live web navigation on top while viewing live intercepted packets below) and a Fullscreen Workbench view for dedicated request manipulation and repeating.
+
