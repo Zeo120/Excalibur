@@ -3,13 +3,30 @@ use crate::network::{HttpHeaders, HttpRequest, HttpResponse};
 use crate::tls::{Ja3Preset, TlsConfigBuilder};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use url::Url;
+
+enum HttpSender {
+    Http1(hyper::client::conn::http1::SendRequest<Full<Bytes>>),
+    Http2(hyper::client::conn::http2::SendRequest<Full<Bytes>>),
+}
+
+impl HttpSender {
+    async fn send_request(
+        &mut self,
+        req: hyper::Request<Full<Bytes>>,
+    ) -> std::result::Result<hyper::Response<hyper::body::Incoming>, hyper::Error> {
+        match self {
+            Self::Http1(s) => s.send_request(req).await,
+            Self::Http2(s) => s.send_request(req).await,
+        }
+    }
+}
 
 /// Configuration options for the HTTP/HTTPS client.
 #[derive(Debug, Clone)]
@@ -51,8 +68,38 @@ impl HttpClient {
         })
     }
 
-    /// Dispatches an HttpRequest and returns an HttpResponse.
+    /// Dispatches an HttpRequest and follows HTTP redirects.
     pub async fn dispatch(&self, req: &HttpRequest) -> Result<HttpResponse> {
+        let mut current_req = req.clone();
+        let mut redirects_left = 5;
+
+        loop {
+            let res = self.dispatch_single(&current_req).await?;
+            if (res.status == 301
+                || res.status == 302
+                || res.status == 303
+                || res.status == 307
+                || res.status == 308)
+                && redirects_left > 0
+                && (current_req.method == "GET" || current_req.method == "HEAD")
+            {
+                if let Some(location) = res.headers.get("location") {
+                    let base_url = Url::parse(&current_req.url)?;
+                    if let Ok(next_url) = base_url.join(location) {
+                        current_req.url = next_url.to_string();
+                        redirects_left -= 1;
+                        continue;
+                    }
+                }
+            }
+            let mut final_res = res;
+            final_res.headers.set("X-Final-URL", &current_req.url);
+            return Ok(final_res);
+        }
+    }
+
+    /// Dispatches a single HttpRequest without following redirects.
+    pub async fn dispatch_single(&self, req: &HttpRequest) -> Result<HttpResponse> {
         let parsed_url = Url::parse(&req.url)?;
         let scheme = parsed_url.scheme();
         let host = parsed_url
@@ -107,7 +154,7 @@ impl HttpClient {
 
         let is_https = scheme == "https";
 
-        let (mut sender, conn_handle) = if is_https {
+        let (mut sender, conn_handle, is_h2) = if is_https {
             let server_name = ServerName::try_from(host.to_string())
                 .map_err(|e| CoreError::Tls(format!("Invalid server name: {}", e)))?;
 
@@ -117,37 +164,56 @@ impl HttpClient {
                 .await
                 .map_err(|e| CoreError::Tls(format!("TLS handshake failed: {}", e)))?;
 
+            let is_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2");
             let io = TokioIo::new(tls_stream);
-            let (sender, conn) = hyper::client::conn::http1::handshake(io)
-                .await
-                .map_err(|e| CoreError::Http(format!("HTTP/1.1 handshake failed: {}", e)))?;
-            (
-                sender,
-                tokio::spawn(async move {
+
+            if is_h2 {
+                let (sender, conn) =
+                    hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+                        .await
+                        .map_err(|e| CoreError::Http(format!("HTTP/2 handshake failed: {}", e)))?;
+
+                let handle = tokio::spawn(async move {
                     if let Err(err) = conn.await {
-                        tracing::debug!("Connection closed: {:?}", err);
+                        tracing::debug!("HTTP/2 connection closed: {:?}", err);
                     }
-                }),
-            )
+                });
+                (HttpSender::Http2(sender), handle, true)
+            } else {
+                let (sender, conn) = hyper::client::conn::http1::handshake(io)
+                    .await
+                    .map_err(|e| CoreError::Http(format!("HTTP/1.1 handshake failed: {}", e)))?;
+
+                let handle = tokio::spawn(async move {
+                    if let Err(err) = conn.await {
+                        tracing::debug!("HTTP/1.1 connection closed: {:?}", err);
+                    }
+                });
+                (HttpSender::Http1(sender), handle, false)
+            }
         } else {
             let io = TokioIo::new(tcp_stream);
             let (sender, conn) = hyper::client::conn::http1::handshake(io)
                 .await
                 .map_err(|e| CoreError::Http(format!("HTTP/1.1 handshake failed: {}", e)))?;
-            (
-                sender,
-                tokio::spawn(async move {
-                    if let Err(err) = conn.await {
-                        tracing::debug!("Connection closed: {:?}", err);
-                    }
-                }),
-            )
+
+            let handle = tokio::spawn(async move {
+                if let Err(err) = conn.await {
+                    tracing::debug!("HTTP/1.1 connection closed: {:?}", err);
+                }
+            });
+            (HttpSender::Http1(sender), handle, false)
         };
 
         // Build hyper request
-        let mut builder = hyper::Request::builder()
-            .method(req.method.as_str())
-            .uri(path_and_query);
+        let mut builder = hyper::Request::builder().method(req.method.as_str());
+
+        if is_h2 {
+            // HTTP/2 requires absolute URI or pseudo-headers :scheme and :authority
+            builder = builder.uri(parsed_url.as_str());
+        } else {
+            builder = builder.uri(path_and_query);
+        }
 
         for (k, v) in req.headers.iter() {
             builder = builder.header(k, v);

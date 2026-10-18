@@ -70,6 +70,15 @@ pub struct PageLoadedEvent {
     pub traffic_item: GuiTrafficItem,
 }
 
+pub enum PageNavigationEvent {
+    Success(Box<PageLoadedEvent>),
+    Failure {
+        tab_id: usize,
+        url: String,
+        error: String,
+    },
+}
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum XModeTab {
     Interceptor,
@@ -106,8 +115,8 @@ pub struct GuiApp {
     pub proxy_state: ProxyManagerState,
 
     // Async page loading channels
-    pub page_tx: Sender<PageLoadedEvent>,
-    pub page_rx: Receiver<PageLoadedEvent>,
+    pub page_tx: Sender<PageNavigationEvent>,
+    pub page_rx: Receiver<PageNavigationEvent>,
 }
 
 impl GuiApp {
@@ -296,9 +305,15 @@ impl GuiApp {
                             ),
                         };
 
-                        let _ = tx.send(PageLoadedEvent {
+                        let final_url = res
+                            .headers
+                            .get("x-final-url")
+                            .unwrap_or(&target_url)
+                            .to_string();
+
+                        let _ = tx.send(PageNavigationEvent::Success(Box::new(PageLoadedEvent {
                             tab_id,
-                            url: target_url,
+                            url: final_url,
                             status: res.status,
                             elapsed_ms: res.elapsed_ms,
                             raw_html: body_str,
@@ -306,10 +321,15 @@ impl GuiApp {
                             title,
                             findings,
                             traffic_item,
-                        });
+                        })));
                     }
                     Err(e) => {
                         tracing::error!("Navigation error for {}: {}", target_url, e);
+                        let _ = tx.send(PageNavigationEvent::Failure {
+                            tab_id,
+                            url: target_url,
+                            error: e.to_string(),
+                        });
                     }
                 }
             });
@@ -318,24 +338,46 @@ impl GuiApp {
 
     pub fn poll_network_events(&mut self) {
         while let Ok(event) = self.page_rx.try_recv() {
-            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == event.tab_id) {
-                tab.is_loading = false;
-                tab.status_code = Some(event.status);
-                tab.elapsed_ms = Some(event.elapsed_ms);
-                tab.raw_html = event.raw_html;
-                tab.parsed_dom = Some(event.parsed_dom);
-                tab.title = event.title;
-            }
+            match event {
+                PageNavigationEvent::Success(loaded) => {
+                    let tab_id = loaded.tab_id;
+                    let loaded_url = loaded.url.clone();
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.is_loading = false;
+                        tab.error_msg = None;
+                        tab.url = loaded_url.clone();
+                        tab.status_code = Some(loaded.status);
+                        tab.elapsed_ms = Some(loaded.elapsed_ms);
+                        tab.raw_html = loaded.raw_html;
+                        tab.parsed_dom = Some(loaded.parsed_dom);
+                        tab.title = loaded.title;
+                    }
 
-            // Populate X-Mode security data automatically
-            self.interceptor_state
-                .traffic_items
-                .push(event.traffic_item);
-            for f in event.findings {
-                if !self.scanner_state.findings.iter().any(|existing| {
-                    existing.rule_id == f.rule_id && existing.evidence == f.evidence
-                }) {
-                    self.scanner_state.findings.push(f);
+                    if self.active_tab_id == tab_id {
+                        self.omnibox_input = loaded_url;
+                    }
+
+                    // Populate X-Mode security data automatically
+                    self.interceptor_state
+                        .traffic_items
+                        .push(loaded.traffic_item);
+                    for f in loaded.findings {
+                        if !self.scanner_state.findings.iter().any(|existing| {
+                            existing.rule_id == f.rule_id && existing.evidence == f.evidence
+                        }) {
+                            self.scanner_state.findings.push(f);
+                        }
+                    }
+                }
+                PageNavigationEvent::Failure {
+                    tab_id,
+                    url: _,
+                    error,
+                } => {
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.is_loading = false;
+                        tab.error_msg = Some(error);
+                    }
                 }
             }
         }

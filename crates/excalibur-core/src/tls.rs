@@ -115,7 +115,7 @@ impl TlsConfigBuilder {
         Self {
             bypass_verification: false,
             ja3_preset: Ja3Preset::ModernStandard,
-            alpn_protocols: vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            alpn_protocols: vec![b"http/1.1".to_vec()],
         }
     }
 
@@ -169,9 +169,6 @@ mod tests {
         let config = builder.build();
         assert!(config.is_ok());
         let config = config.unwrap();
-        assert_eq!(
-            config.alpn_protocols,
-            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
-        );
+        assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
     }
 }
