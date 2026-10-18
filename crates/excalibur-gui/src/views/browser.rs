@@ -1,217 +1,426 @@
-use eframe::egui::{Color32, RichText, ScrollArea, Ui};
+use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
 use excalibur_dom::{DomNode, NodeType};
+use std::collections::HashMap;
 
-#[derive(Default, PartialEq, Eq)]
-pub enum BrowserSubView {
-    #[default]
-    VisualCanvas,
-    LiveDomTree,
-    RawSourceAndHex,
+/// An action requested by the interactive browser view to the parent app.
+pub enum BrowserAction {
+    Navigate(String),
 }
 
-pub struct BrowserViewState {
-    pub sub_view: BrowserSubView,
-    pub raw_html: String,
-    pub parsed_dom: Option<DomNode>,
-    pub test_input_val: String,
+/// Visual browser viewport rendering DOM nodes into interactive GUI elements.
+#[derive(Default)]
+pub struct BrowserRenderer {
+    pub input_states: HashMap<String, String>,
 }
 
-impl Default for BrowserViewState {
-    fn default() -> Self {
-        let sample_html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Excalibur Security Workbench</title>
-</head>
-<body>
-    <h1>Application Security Portal</h1>
-    <p>Target running on internal enterprise network. Security telemetry active.</p>
-    <a href="https://example.com/api/v1/users">Browse User API Endpoints</a>
-    <hr/>
-    <form action="/login" method="POST">
-        <label>Username: </label>
-        <input name="username" value="admin" />
-        <br/>
-        <label>Password: </label>
-        <input name="password" type="password" value="" />
-        <br/>
-        <button type="submit">Authenticate</button>
-    </form>
-</body>
-</html>"#;
+impl BrowserRenderer {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-        let dom = Some(excalibur_dom::HtmlParser::parse(sample_html));
+    /// Renders the current browser tab contents.
+    pub fn render(
+        &mut self,
+        ui: &mut Ui,
+        url: &str,
+        dom: Option<&DomNode>,
+        is_loading: bool,
+        error_msg: Option<&str>,
+    ) -> Option<BrowserAction> {
+        let mut action = None;
 
-        Self {
-            sub_view: BrowserSubView::VisualCanvas,
-            raw_html: sample_html.to_string(),
-            parsed_dom: dom,
-            test_input_val: "admin".to_string(),
+        if is_loading {
+            self.render_loading(ui, url);
+            return None;
         }
+
+        if let Some(err) = error_msg {
+            self.render_error(ui, url, err, &mut action);
+            return action;
+        }
+
+        if url == "about:blank" || url == "excalibur://newtab" || dom.is_none() {
+            self.render_speed_dial(ui, &mut action);
+            return action;
+        }
+
+        if let Some(root) = dom {
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(8.0);
+                    self.render_node(ui, root, &mut action, url);
+                    ui.add_space(24.0);
+                });
+        }
+
+        action
     }
-}
 
-pub fn render_browser_view(ui: &mut Ui, state: &mut BrowserViewState, current_url: &str) {
-    ui.horizontal(|ui| {
-        ui.selectable_value(
-            &mut state.sub_view,
-            BrowserSubView::VisualCanvas,
-            "Visual Viewport",
-        );
-        ui.selectable_value(
-            &mut state.sub_view,
-            BrowserSubView::LiveDomTree,
-            "Live DOM Tree",
-        );
-        ui.selectable_value(
-            &mut state.sub_view,
-            BrowserSubView::RawSourceAndHex,
-            "Raw Source & Hex Dump",
-        );
-        ui.separator();
-        ui.label(
-            RichText::new(format!("Location: {}", current_url))
-                .color(Color32::from_rgb(88, 166, 255)),
-        );
-    });
-
-    ui.separator();
-
-    match state.sub_view {
-        BrowserSubView::VisualCanvas => render_visual_canvas(ui, state),
-        BrowserSubView::LiveDomTree => render_dom_tree(ui, state),
-        BrowserSubView::RawSourceAndHex => render_raw_and_hex(ui, state),
-    }
-}
-
-fn render_visual_canvas(ui: &mut Ui, state: &mut BrowserViewState) {
-    ScrollArea::vertical().show(ui, |ui| {
-        ui.group(|ui| {
+    fn render_loading(&self, ui: &mut Ui, url: &str) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(80.0);
+            ui.spinner();
+            ui.add_space(16.0);
             ui.label(
-                RichText::new("Application Security Portal")
-                    .size(22.0)
+                RichText::new("Loading Webpage...")
+                    .size(18.0)
                     .strong()
                     .color(Color32::from_rgb(88, 166, 255)),
             );
+            ui.label(
+                RichText::new(format!("Connecting to {}", url))
+                    .color(Color32::from_rgb(139, 148, 158)),
+            );
             ui.add_space(8.0);
-            ui.label("Target running on internal enterprise network. Security telemetry active.");
+            ui.label("Performing TLS 1.3 handshake and parsing HTML5 layout tree...");
+        });
+    }
+
+    fn render_error(&self, ui: &mut Ui, url: &str, err: &str, action: &mut Option<BrowserAction>) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(60.0);
+            ui.label(
+                RichText::new("Failed to Load Webpage")
+                    .size(22.0)
+                    .strong()
+                    .color(Color32::from_rgb(248, 81, 73)),
+            );
+            ui.add_space(8.0);
+            ui.label(format!("Target: {}", url));
             ui.add_space(8.0);
 
-            if ui
-                .link("Browse User API Endpoints (https://example.com/api/v1/users)")
-                .clicked()
-            {
-                tracing::info!("Link clicked in visual canvas");
-            }
+            Frame::NONE
+                .fill(Color32::from_rgb(22, 27, 34))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(err).color(Color32::from_rgb(248, 81, 73)));
+                });
 
-            ui.separator();
-            ui.heading("Authentication Form");
-            ui.horizontal(|ui| {
-                ui.label("Username:");
-                ui.text_edit_singleline(&mut state.test_input_val);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Password:");
-                let mut pass = "********".to_string();
-                ui.text_edit_singleline(&mut pass);
-            });
-            if ui.button("Authenticate").clicked() {
-                tracing::info!("Form submission button clicked");
+            ui.add_space(16.0);
+            if ui.button("Try Again").clicked() {
+                *action = Some(BrowserAction::Navigate(url.to_string()));
             }
         });
-    });
-}
+    }
 
-fn render_dom_tree(ui: &mut Ui, state: &BrowserViewState) {
-    ScrollArea::both().show(ui, |ui| {
-        if let Some(dom) = &state.parsed_dom {
-            render_node(ui, dom, 0);
-        } else {
-            ui.label("No DOM tree parsed.");
-        }
-    });
-}
-
-fn render_node(ui: &mut Ui, node: &DomNode, depth: usize) {
-    let indent = "  ".repeat(depth);
-    match &node.node_type {
-        NodeType::Document => {
-            ui.label(format!("{}#document", indent));
-            for child in &node.children {
-                render_node(ui, child, depth + 1);
-            }
-        }
-        NodeType::Element { tag, attributes } => {
-            let mut attr_str = String::new();
-            for (k, v) in attributes {
-                attr_str.push_str(&format!(" {}=\"{}\"", k, v));
-            }
-            ui.horizontal(|ui| {
-                ui.label(format!("{}<{}", indent, tag));
-                if !attr_str.is_empty() {
-                    ui.label(RichText::new(&attr_str).color(Color32::from_rgb(209, 154, 102)));
-                }
-                ui.label(">");
-            });
-            for child in &node.children {
-                render_node(ui, child, depth + 1);
-            }
-        }
-        NodeType::Text(text) => {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
+    fn render_speed_dial(&self, ui: &mut Ui, action: &mut Option<BrowserAction>) {
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
                 ui.label(
-                    RichText::new(format!("{}\"{}\"", indent, trimmed))
-                        .color(Color32::from_rgb(152, 195, 121)),
+                    RichText::new("Excalibur Browser")
+                        .size(32.0)
+                        .strong()
+                        .color(Color32::from_rgb(88, 166, 255)),
                 );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Independent non-Chromium architecture with built-in penetration testing & telemetry")
+                        .size(14.0)
+                        .color(Color32::from_rgb(139, 148, 158)),
+                );
+                ui.add_space(32.0);
+
+                ui.heading("Quick Access Targets");
+                ui.add_space(12.0);
+
+                let shortcuts = [
+                    (
+                        "Example Domain",
+                        "https://example.com",
+                        "Clean standard IANA reference page",
+                    ),
+                    (
+                        "Hacker News",
+                        "https://news.ycombinator.com",
+                        "Tech news aggregator with dense HTML tables",
+                    ),
+                    (
+                        "OWASP Foundation",
+                        "https://owasp.org",
+                        "Worldwide non-profit dedicated to web application security",
+                    ),
+                    (
+                        "HTTPBin HTML Sandbox",
+                        "https://httpbin.org/html",
+                        "Test HTML document with moby-dick passage",
+                    ),
+                    (
+                        "GitHub",
+                        "https://github.com",
+                        "Developer platform and code hosting",
+                    ),
+                ];
+
+                for (name, url, desc) in shortcuts {
+                    let frame = Frame::NONE
+                        .fill(Color32::from_rgb(22, 27, 34))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                        .inner_margin(Margin::same(12));
+
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new(name)
+                                        .size(16.0)
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                );
+                                ui.label(
+                                    RichText::new(desc)
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(139, 148, 158)),
+                                );
+                                ui.label(
+                                    RichText::new(url)
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(88, 166, 255)),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Open Target").clicked() {
+                                        *action = Some(BrowserAction::Navigate(url.to_string()));
+                                    }
+                                },
+                            );
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+            });
+        });
+    }
+
+    fn render_node(
+        &mut self,
+        ui: &mut Ui,
+        node: &DomNode,
+        action: &mut Option<BrowserAction>,
+        current_url: &str,
+    ) {
+        match &node.node_type {
+            NodeType::Document => {
+                for child in &node.children {
+                    self.render_node(ui, child, action, current_url);
+                }
             }
-        }
-        NodeType::Comment(comment) => {
-            ui.label(RichText::new(format!("{}<!-- {} -->", indent, comment)).color(Color32::GRAY));
+            NodeType::Element { tag, attributes } => {
+                let tag_lower = tag.to_ascii_lowercase();
+
+                // Skip non-rendering head metadata
+                if tag_lower == "head"
+                    || tag_lower == "style"
+                    || tag_lower == "script"
+                    || tag_lower == "meta"
+                    || tag_lower == "link"
+                {
+                    return;
+                }
+
+                match tag_lower.as_str() {
+                    "h1" => {
+                        let text = node.text_content();
+                        ui.add_space(10.0);
+                        ui.label(
+                            RichText::new(text.trim())
+                                .size(24.0)
+                                .strong()
+                                .color(Color32::from_rgb(88, 166, 255)),
+                        );
+                        ui.add_space(6.0);
+                    }
+                    "h2" => {
+                        let text = node.text_content();
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(text.trim())
+                                .size(20.0)
+                                .strong()
+                                .color(Color32::from_rgb(121, 192, 255)),
+                        );
+                        ui.add_space(4.0);
+                    }
+                    "h3" => {
+                        let text = node.text_content();
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(text.trim())
+                                .size(16.0)
+                                .strong()
+                                .color(Color32::from_rgb(201, 209, 217)),
+                        );
+                        ui.add_space(2.0);
+                    }
+                    "p" => {
+                        let text = node.text_content();
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            ui.label(RichText::new(trimmed).size(14.0));
+                            ui.add_space(4.0);
+                        }
+                    }
+                    "a" => {
+                        let href = attributes.get("href").map(|s| s.as_str()).unwrap_or("");
+                        let text = node.text_content();
+                        let display_text = if text.trim().is_empty() {
+                            href
+                        } else {
+                            text.trim()
+                        };
+
+                        let link_label = RichText::new(display_text)
+                            .color(Color32::from_rgb(88, 166, 255))
+                            .underline();
+                        if ui.link(link_label).clicked() && !href.is_empty() {
+                            let target_url = self.resolve_url(current_url, href);
+                            *action = Some(BrowserAction::Navigate(target_url));
+                        }
+                    }
+                    "button" => {
+                        let text = node.text_content();
+                        let btn_text = if text.trim().is_empty() {
+                            "Submit"
+                        } else {
+                            text.trim()
+                        };
+                        if ui.button(btn_text).clicked() {
+                            tracing::info!("Button clicked: {}", btn_text);
+                        }
+                    }
+                    "input" => {
+                        let input_type =
+                            attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+                        let input_name = attributes
+                            .get("name")
+                            .or_else(|| attributes.get("id"))
+                            .map(|s| s.as_str())
+                            .unwrap_or("field");
+                        let default_val = attributes.get("value").map(|s| s.as_str()).unwrap_or("");
+
+                        let current_val = self
+                            .input_states
+                            .entry(input_name.to_string())
+                            .or_insert_with(|| default_val.to_string());
+
+                        if input_type == "submit" {
+                            let label = if current_val.is_empty() {
+                                "Submit"
+                            } else {
+                                current_val.as_str()
+                            };
+                            if ui.button(label).clicked() {
+                                tracing::info!("Submit input clicked: {}", input_name);
+                            }
+                        } else if input_type == "password" {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}:", input_name));
+                                ui.add(egui::TextEdit::singleline(current_val).password(true));
+                            });
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}:", input_name));
+                                ui.text_edit_singleline(current_val);
+                            });
+                        }
+                    }
+                    "hr" => {
+                        ui.separator();
+                    }
+                    "pre" | "code" => {
+                        let code_text = node.text_content();
+                        Frame::NONE
+                            .fill(Color32::from_rgb(13, 17, 23))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .inner_margin(Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.code(code_text.trim());
+                            });
+                    }
+                    "blockquote" => {
+                        let text = node.text_content();
+                        Frame::NONE
+                            .fill(Color32::from_rgb(22, 27, 34))
+                            .stroke(Stroke::new(2.0_f32, Color32::from_rgb(88, 166, 255)))
+                            .inner_margin(Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(text.trim()).italics());
+                            });
+                    }
+                    "ul" | "ol" => {
+                        ui.vertical(|ui| {
+                            for child in &node.children {
+                                if child.tag() == Some("li") {
+                                    let item_text = child.text_content();
+                                    ui.horizontal(|ui| {
+                                        ui.label("•");
+                                        ui.label(item_text.trim());
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    "table" => {
+                        Frame::NONE
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .inner_margin(Margin::same(6))
+                            .show(ui, |ui| {
+                                for child in &node.children {
+                                    self.render_node(ui, child, action, current_url);
+                                }
+                            });
+                    }
+                    "tr" => {
+                        ui.horizontal(|ui| {
+                            for child in &node.children {
+                                let cell_tag = child.tag().unwrap_or("");
+                                if cell_tag == "td" || cell_tag == "th" {
+                                    let is_header = cell_tag == "th";
+                                    let text = child.text_content();
+                                    let rich = if is_header {
+                                        RichText::new(text.trim()).strong().color(Color32::WHITE)
+                                    } else {
+                                        RichText::new(text.trim())
+                                    };
+                                    ui.label(rich);
+                                    ui.separator();
+                                }
+                            }
+                        });
+                    }
+                    _ => {
+                        // Standard container (div, span, section, body, main, etc.)
+                        for child in &node.children {
+                            self.render_node(ui, child, action, current_url);
+                        }
+                    }
+                }
+            }
+            NodeType::Text(text) => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    ui.label(trimmed);
+                }
+            }
+            NodeType::Comment(_) => {}
         }
     }
-}
 
-fn render_raw_and_hex(ui: &mut Ui, state: &BrowserViewState) {
-    ScrollArea::both().show(ui, |ui| {
-        ui.heading("Raw HTML Source");
-        ui.code(&state.raw_html);
-
-        ui.add_space(12.0);
-        ui.heading("Hex View (First 256 bytes)");
-
-        let bytes = state.raw_html.as_bytes();
-        let limit = bytes.len().min(256);
-        let mut hex_lines = String::new();
-
-        for chunk_idx in (0..limit).step_by(16) {
-            let end = (chunk_idx + 16).min(limit);
-            let slice = &bytes[chunk_idx..end];
-
-            // Offset
-            let mut line = format!("{:08x}  ", chunk_idx);
-
-            // Hex
-            for b in slice {
-                line.push_str(&format!("{:02x} ", b));
-            }
-            for _ in slice.len()..16 {
-                line.push_str("   ");
-            }
-
-            line.push_str(" |");
-            // ASCII
-            for b in slice {
-                if b.is_ascii_graphic() || *b == b' ' {
-                    line.push(*b as char);
-                } else {
-                    line.push('.');
-                }
-            }
-            line.push_str("|\n");
-            hex_lines.push_str(&line);
+    fn resolve_url(&self, base_url: &str, href: &str) -> String {
+        if href.starts_with("http://") || href.starts_with("https://") {
+            return href.to_string();
         }
 
-        ui.code(hex_lines);
-    });
+        if let Ok(base) = url::Url::parse(base_url) {
+            if let Ok(resolved) = base.join(href) {
+                return resolved.to_string();
+            }
+        }
+
+        href.to_string()
+    }
 }

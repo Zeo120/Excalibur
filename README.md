@@ -15,7 +15,7 @@
 
 - **Independent Engine**: Zero Chromium or WebKit dependency. Custom parsing and rendering pipeline with full inspection of every DOM node, script hook, and network frame.
 - **Dual Interface Modes**:
-  - **Premium Native GUI**: Hardware-accelerated (`egui` / `wgpu`) workstation featuring dockable tabs, interactive DOM tree explorer, multi-view canvas, and visual security badges.
+  - **Modern GUI Browser & X-Mode Workbench**: Hardware-accelerated (`egui` / `wgpu`) daily browser featuring multi-tab browsing, omnibox navigation, visual DOM rendering with clickable links, and a dedicated menu toggle (`[ X-MODE ]`) to unveil the full penetration testing workbench (Traffic Interceptor, Request Repeater, Vulnerability Radar, DOM Inspector, and QuickJS XSS Sink Interceptor).
   - **Full-Screen Terminal TUI**: Keyboard-driven (`ratatui`) interface for SSH sessions, headless environments, and terminal workflows.
 - **Dual-Role Network Engine**:
   - Internal browser request dispatcher with JA3/JA4 TLS fingerprint spoofing and HTTP/2 framing.
@@ -68,14 +68,16 @@ The compiled executable will be located at `target/release/excalibur`.
 
 ## Usage
 
-### 1. Launching the Native GUI
-Starts the hardware-accelerated desktop workstation:
+### 1. Launching the Modern GUI Browser
+Starts the modern desktop browser with multi-tab support and the X-Mode penetration testing workbench:
 
 ```bash
 cargo run --bin excalibur
-# Or specify a target URL:
+# Or launch directly with a target URL:
 cargo run --bin excalibur -- https://example.com
 ```
+
+Once running, click the `[ X-MODE ]` toggle in the menu bar to open or dock the penetration testing tool suite.
 
 ### 2. Launching the Terminal User Interface (TUI)
 Starts the full-screen terminal workbench:

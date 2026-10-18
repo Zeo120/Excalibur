@@ -1154,8 +1154,11 @@ dependencies = [
  "excalibur-audit",
  "excalibur-core",
  "excalibur-dom",
+ "excalibur-proxy",
+ "excalibur-script",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

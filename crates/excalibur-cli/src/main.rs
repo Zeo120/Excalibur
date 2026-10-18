@@ -136,12 +136,12 @@ async fn main() -> Result<()> {
         let native_options = NativeOptions::default();
         let target_url = cli.url.clone();
         let _ = eframe::run_native(
-            "Excalibur Security Workbench",
+            "Excalibur Browser",
             native_options,
             Box::new(move |cc| {
                 let mut app = GuiApp::new(cc);
                 if let Some(url) = target_url {
-                    app.url_input = url;
+                    app.navigate(1, &url);
                 }
                 Ok(Box::new(app))
             }),

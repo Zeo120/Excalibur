@@ -9,6 +9,8 @@ license.workspace = true
 excalibur-core = { path = "../excalibur-core" }
 excalibur-dom = { path = "../excalibur-dom" }
 excalibur-audit = { path = "../excalibur-audit" }
+excalibur-proxy = { path = "../excalibur-proxy" }
+excalibur-script = { path = "../excalibur-script" }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
@@ -16,3 +18,4 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+url = { workspace = true }

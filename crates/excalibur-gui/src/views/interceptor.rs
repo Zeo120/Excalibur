@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32, RichText, ScrollArea, Ui};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GuiTrafficItem {
     pub id: String,
     pub method: String,
@@ -12,6 +12,11 @@ pub struct GuiTrafficItem {
     pub response_raw: String,
 }
 
+pub enum InterceptorAction {
+    SendToRepeater(GuiTrafficItem),
+}
+
+#[derive(Default)]
 pub struct InterceptorViewState {
     pub intercept_enabled: bool,
     pub filter_text: String,
@@ -21,43 +26,12 @@ pub struct InterceptorViewState {
     pub paused_req_buffer: String,
 }
 
-impl Default for InterceptorViewState {
-    fn default() -> Self {
-        let items = vec![
-            GuiTrafficItem {
-                id: "req-1".into(),
-                method: "GET".into(),
-                status: 200,
-                url: "https://example.com/".into(),
-                size: 1256,
-                elapsed_ms: 34,
-                request_raw: "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Excalibur/0.1.0\r\n\r\n".into(),
-                response_raw: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><html>...</html>".into(),
-            },
-            GuiTrafficItem {
-                id: "req-2".into(),
-                method: "POST".into(),
-                status: 403,
-                url: "https://example.com/api/v1/auth".into(),
-                size: 218,
-                elapsed_ms: 112,
-                request_raw: "POST /api/v1/auth HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n{\"user\":\"admin\"}".into(),
-                response_raw: "HTTP/1.1 403 Forbidden\r\nServer: nginx/1.18.0\r\n\r\n{\"error\":\"Invalid CSRF token\"}".into(),
-            },
-        ];
+pub fn render_interceptor_view(
+    ui: &mut Ui,
+    state: &mut InterceptorViewState,
+) -> Option<InterceptorAction> {
+    let mut action = None;
 
-        Self {
-            intercept_enabled: false,
-            filter_text: String::new(),
-            selected_idx: 0,
-            traffic_items: items,
-            is_request_paused: false,
-            paused_req_buffer: String::new(),
-        }
-    }
-}
-
-pub fn render_interceptor_view(ui: &mut Ui, state: &mut InterceptorViewState) {
     ui.horizontal(|ui| {
         let toggle_text = if state.intercept_enabled {
             RichText::new("[ Intercept: ON ]")
@@ -74,6 +48,11 @@ pub fn render_interceptor_view(ui: &mut Ui, state: &mut InterceptorViewState) {
         ui.separator();
         ui.label("Filter:");
         ui.text_edit_singleline(&mut state.filter_text);
+
+        if ui.button("Clear Log").clicked() {
+            state.traffic_items.clear();
+            state.selected_idx = 0;
+        }
 
         if state.is_request_paused {
             ui.separator();
@@ -96,15 +75,17 @@ pub fn render_interceptor_view(ui: &mut Ui, state: &mut InterceptorViewState) {
     // Split top table and bottom inspector
     egui::TopBottomPanel::bottom("inspector_details")
         .resizable(true)
-        .min_height(150.0)
-        .default_height(250.0)
+        .min_height(140.0)
+        .default_height(240.0)
         .show_inside(ui, |ui| {
-            render_detail_panes(ui, state);
+            render_detail_panes(ui, state, &mut action);
         });
 
     egui::CentralPanel::default().show_inside(ui, |ui| {
         render_traffic_table(ui, state);
     });
+
+    action
 }
 
 fn render_traffic_table(ui: &mut Ui, state: &mut InterceptorViewState) {
@@ -154,19 +135,32 @@ fn render_traffic_table(ui: &mut Ui, state: &mut InterceptorViewState) {
     });
 }
 
-fn render_detail_panes(ui: &mut Ui, state: &mut InterceptorViewState) {
-    let (req_raw, res_raw) = if let Some(item) = state.traffic_items.get(state.selected_idx) {
-        (&item.request_raw, &item.response_raw)
-    } else {
-        (
-            &"No request selected.".to_string(),
-            &"No response selected.".to_string(),
-        )
-    };
+fn render_detail_panes(
+    ui: &mut Ui,
+    state: &InterceptorViewState,
+    action: &mut Option<InterceptorAction>,
+) {
+    let (req_raw, res_raw, selected_item) =
+        if let Some(item) = state.traffic_items.get(state.selected_idx) {
+            (&item.request_raw, &item.response_raw, Some(item))
+        } else {
+            (
+                &"No request selected.".to_string(),
+                &"No response selected.".to_string(),
+                None,
+            )
+        };
 
     ui.columns(2, |cols| {
         cols[0].group(|ui| {
-            ui.heading("HTTP Request Inspector");
+            ui.horizontal(|ui| {
+                ui.heading("HTTP Request Inspector");
+                if let Some(item) = selected_item {
+                    if ui.button("Send to Repeater").clicked() {
+                        *action = Some(InterceptorAction::SendToRepeater(item.clone()));
+                    }
+                }
+            });
             ScrollArea::vertical().show(ui, |ui| {
                 ui.code(req_raw);
             });

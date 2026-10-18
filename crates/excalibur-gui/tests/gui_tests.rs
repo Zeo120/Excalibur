@@ -1,38 +1,91 @@
 use eframe::egui;
-use excalibur_gui::GuiApp;
+use excalibur_gui::app::{BrowserTab, GuiApp, XModeLayout, XModeTab};
+use std::sync::mpsc::channel;
 
-#[test]
-fn test_gui_app_headless_frame_renders() {
-    let ctx = egui::Context::default();
-    let mut app = GuiApp {
-        url_input: "https://example.com/test".to_string(),
-        selected_tab: 0,
-        browser_state: Default::default(),
+fn create_test_app() -> GuiApp {
+    let (tx, rx) = channel();
+    GuiApp {
+        tabs: vec![BrowserTab::new(1, "https://example.com")],
+        active_tab_id: 1,
+        next_tab_id: 2,
+        omnibox_input: "https://example.com".to_string(),
+        browser_renderer: Default::default(),
+        x_mode_enabled: false,
+        x_mode_tab: XModeTab::Interceptor,
+        x_mode_layout: XModeLayout::SplitDrawer,
         interceptor_state: Default::default(),
         repeater_state: Default::default(),
         scanner_state: Default::default(),
-    };
+        dom_inspector_state: Default::default(),
+        proxy_state: Default::default(),
+        page_tx: tx,
+        page_rx: rx,
+    }
+}
 
-    // 1. Run frame for Browser Viewport
-    app.selected_tab = 0;
+#[test]
+fn test_modern_browser_rendering_and_tabs() {
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+
+    // 1. Render Modern Browser Mode (X-Mode OFF)
+    assert!(!app.x_mode_enabled);
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
 
-    // 2. Run frame for Traffic Inspector
-    app.selected_tab = 1;
+    // 2. Add New Tab
+    app.tabs.push(BrowserTab::new(2, "https://owasp.org"));
+    app.active_tab_id = 2;
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.active_tab().unwrap().url, "https://owasp.org");
+
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+}
+
+#[test]
+fn test_x_mode_toggle_and_tools_workbench() {
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+
+    // Toggle X-Mode ON
+    app.x_mode_enabled = true;
+    assert!(app.x_mode_enabled);
+
+    // 1. Interceptor Tool
+    app.x_mode_tab = XModeTab::Interceptor;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
 
-    // 3. Run frame for Repeater
-    app.selected_tab = 2;
+    // 2. Repeater Tool
+    app.x_mode_tab = XModeTab::Repeater;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
 
-    // 4. Run frame for Scanner
-    app.selected_tab = 3;
+    // 3. Scanner Tool
+    app.x_mode_tab = XModeTab::Scanner;
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    // 4. DOM & Script Console Tool
+    app.x_mode_tab = XModeTab::DomAndScripts;
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    // 5. Proxy Manager Tool
+    app.x_mode_tab = XModeTab::ProxyManager;
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    // 6. Test Fullscreen layout mode
+    app.x_mode_layout = XModeLayout::FullscreenTools;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
@@ -40,14 +93,8 @@ fn test_gui_app_headless_frame_renders() {
 
 #[test]
 fn test_gui_interceptor_state_transitions() {
-    let mut app = GuiApp {
-        url_input: "https://example.com".to_string(),
-        selected_tab: 1,
-        browser_state: Default::default(),
-        interceptor_state: Default::default(),
-        repeater_state: Default::default(),
-        scanner_state: Default::default(),
-    };
+    let mut app = create_test_app();
+    app.x_mode_enabled = true;
 
     assert!(!app.interceptor_state.intercept_enabled);
     app.interceptor_state.intercept_enabled = true;
@@ -56,23 +103,28 @@ fn test_gui_interceptor_state_transitions() {
     // Pause request breakpoint
     app.interceptor_state.is_request_paused = true;
     app.interceptor_state.paused_req_buffer = "POST /api HTTP/1.1\r\n\r\n{}".into();
-    assert!(app.interceptor_state.is_request_paused);
+    assert!(app.intercalibur_paused());
 
     // Resume / forward
     app.interceptor_state.is_request_paused = false;
     assert!(!app.interceptor_state.is_request_paused);
 }
 
+trait TestHelper {
+    fn intercalibur_paused(&self) -> bool;
+}
+
+impl TestHelper for GuiApp {
+    fn intercalibur_paused(&self) -> bool {
+        self.interceptor_state.is_request_paused
+    }
+}
+
 #[test]
 fn test_gui_repeater_mutation() {
-    let mut app = GuiApp {
-        url_input: "https://example.com".to_string(),
-        selected_tab: 2,
-        browser_state: Default::default(),
-        interceptor_state: Default::default(),
-        repeater_state: Default::default(),
-        scanner_state: Default::default(),
-    };
+    let mut app = create_test_app();
+    app.x_mode_enabled = true;
+    app.x_mode_tab = XModeTab::Repeater;
 
     app.repeater_state.method = "PUT".to_string();
     app.repeater_state.body = "{\"status\": \"updated\"}".to_string();

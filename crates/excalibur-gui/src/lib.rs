@@ -4,4 +4,4 @@ pub mod app;
 pub mod theme;
 pub mod views;
 
-pub use app::GuiApp;
+pub use app::{BrowserTab, GuiApp, XModeLayout, XModeTab};
