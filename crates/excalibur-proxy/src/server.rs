@@ -47,7 +47,7 @@ impl ProxyServer {
 
     pub async fn run(&self) -> Result<()> {
         let listener = TcpListener::bind(self.bind_addr).await?;
-        tracing::info!("⚔️ Excalibur MITM Proxy listening on {}", self.bind_addr);
+        tracing::info!("[*] Excalibur MITM Proxy listening on {}", self.bind_addr);
 
         loop {
             let (stream, client_addr) = listener.accept().await?;

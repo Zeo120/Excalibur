@@ -1088,6 +1088,7 @@ name = "excalibur-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "eframe",
  "excalibur-audit",
@@ -1097,6 +1098,8 @@ dependencies = [
  "excalibur-proxy",
  "excalibur-script",
  "excalibur-tui",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
