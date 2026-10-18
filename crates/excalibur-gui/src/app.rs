@@ -532,7 +532,7 @@ impl GuiApp {
                                 self.omnibox_input = tab.url.clone();
                             }
 
-                            if self.tabs.len() > 1 && ui.small_button("×").clicked() {
+                            if self.tabs.len() > 1 && ui.small_button("x").clicked() {
                                 close_tab_id = Some(tab.id);
                             }
                         });
@@ -599,7 +599,7 @@ impl GuiApp {
             };
 
             // Back button
-            if ui.add_enabled(can_back, egui::Button::new("◀")).clicked() {
+            if ui.add_enabled(can_back, egui::Button::new("<")).clicked() {
                 if let Some(tab) = self.active_tab_mut() {
                     if tab.history_idx > 0 {
                         tab.history_idx -= 1;
@@ -610,7 +610,7 @@ impl GuiApp {
             }
 
             // Forward button
-            if ui.add_enabled(can_fwd, egui::Button::new("▶")).clicked() {
+            if ui.add_enabled(can_fwd, egui::Button::new(">")).clicked() {
                 if let Some(tab) = self.active_tab_mut() {
                     if tab.history_idx + 1 < tab.history.len() {
                         tab.history_idx += 1;
@@ -621,21 +621,21 @@ impl GuiApp {
             }
 
             // Reload button
-            if ui.button("⟳").clicked() {
+            if ui.button("Reload").clicked() {
                 let current_url = self.omnibox_input.clone();
                 self.navigate(active_id, &current_url);
             }
 
             // Home button
-            if ui.button("⌂").clicked() {
+            if ui.button("Home").clicked() {
                 self.navigate(active_id, "about:blank");
             }
 
             // HTTPS security lock badge
             let lock_badge = if is_https {
-                RichText::new("[🔒 HTTPS]").color(Color32::from_rgb(63, 185, 80))
+                RichText::new("[HTTPS]").color(Color32::from_rgb(63, 185, 80))
             } else {
-                RichText::new("[⚠ HTTP]").color(Color32::from_rgb(210, 153, 34))
+                RichText::new("[HTTP]").color(Color32::from_rgb(210, 153, 34))
             };
             ui.label(lock_badge);
 
@@ -657,7 +657,7 @@ impl GuiApp {
 
             // Dual-Engine Switcher: Launch Full Real-World Browser View
             let full_web_btn = ui.button(
-                RichText::new("🌐 Full Web View")
+                RichText::new("Full Web View")
                     .color(Color32::from_rgb(88, 166, 255))
                     .strong(),
             );
@@ -762,7 +762,7 @@ impl GuiApp {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        RichText::new("[● DEFAULT ENGINE]")
+                                        RichText::new("[DEFAULT ENGINE]")
                                             .size(11.0)
                                             .strong()
                                             .color(Color32::from_rgb(63, 185, 80)),
@@ -797,7 +797,7 @@ impl GuiApp {
                                 ui.add_space(12.0);
                                 ui.horizontal(|ui| {
                                     let open_btn = ui.button(
-                                        RichText::new("🚀 Open / Focus Full Web View")
+                                        RichText::new("Open Full Web View")
                                             .size(14.0)
                                             .strong()
                                             .color(Color32::from_rgb(88, 166, 255)),
@@ -812,7 +812,7 @@ impl GuiApp {
                                     }
 
                                     let dev_view_btn = ui.button(
-                                        RichText::new("🔍 Open Dev Web View (X-Mode)")
+                                        RichText::new("Open Dev Web View (X-Mode)")
                                             .size(13.0)
                                             .color(Color32::from_rgb(210, 153, 34)),
                                     );
@@ -822,7 +822,7 @@ impl GuiApp {
                                     }
 
                                     let x_btn = ui.button(
-                                        RichText::new("⚡ Launch X-Mode Tools")
+                                        RichText::new("Launch X-Mode Tools")
                                             .size(13.0)
                                             .strong()
                                             .color(Color32::from_rgb(248, 81, 73)),
@@ -884,7 +884,7 @@ impl GuiApp {
                                         if let Some(ms) = elapsed_ms {
                                             ui.label(format!("({} ms roundtrip)", ms));
                                         }
-                                        ui.label("• TLS 1.3 Interception Verified");
+                                        ui.label("| TLS 1.3 Interception Verified");
                                     });
                                 } else {
                                     ui.label("Ready. Enter any URL in the omnibox to navigate.");

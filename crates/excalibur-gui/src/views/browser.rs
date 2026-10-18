@@ -64,7 +64,7 @@ impl BrowserRenderer {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            RichText::new("[ 🔍 DEV WEB VIEW ]")
+                                            RichText::new("[ DEV WEB VIEW ]")
                                                 .size(13.0)
                                                 .strong()
                                                 .color(Color32::from_rgb(88, 166, 255)),
@@ -394,7 +394,7 @@ impl BrowserRenderer {
                                         .desired_width(ui.available_width().min(450.0)),
                                 );
                                 if (input_name == "q" || input_type == "search")
-                                    && (ui.button("🔍 Search").clicked()
+                                    && (ui.button("Search").clicked()
                                         || (te.lost_focus()
                                             && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                                     && !current_val.is_empty()
@@ -437,7 +437,7 @@ impl BrowserRenderer {
                                 if child.tag() == Some("li") {
                                     let item_text = child.text_content();
                                     ui.horizontal(|ui| {
-                                        ui.label("•");
+                                        ui.label("-");
                                         ui.label(item_text.trim());
                                     });
                                 }
