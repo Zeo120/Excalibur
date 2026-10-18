@@ -3,6 +3,7 @@ use crate::network::{HttpHeaders, HttpRequest, HttpResponse};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditFindingRecord {
@@ -17,27 +18,32 @@ pub struct AuditFindingRecord {
 }
 
 pub struct WorkspaceStorage {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl WorkspaceStorage {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
-        let storage = Self { conn };
+        let storage = Self {
+            conn: Mutex::new(conn),
+        };
         storage.init_database()?;
         Ok(storage)
     }
 
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let storage = Self { conn };
+        let storage = Self {
+            conn: Mutex::new(conn),
+        };
         storage.init_database()?;
         Ok(storage)
     }
 
     fn init_database(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
         // High-performance Pragmas
-        self.conn.execute_batch(
+        conn.execute_batch(
             r#"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
@@ -96,7 +102,7 @@ impl WorkspaceStorage {
         )?;
 
         // Full-Text Search FTS5 Table
-        let _ = self.conn.execute_batch(
+        let _ = conn.execute_batch(
             r#"
             CREATE VIRTUAL TABLE IF NOT EXISTS requests_fts USING fts5(
                 id UNINDEXED,
@@ -112,14 +118,15 @@ impl WorkspaceStorage {
 
     pub fn save_request(&self, req: &HttpRequest) -> Result<()> {
         let headers_json = serde_json::to_string(&req.headers)?;
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR REPLACE INTO requests (id, method, url, version, headers, body, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![req.id, req.method, req.url, req.version, headers_json, req.body, req.timestamp],
         )?;
 
         // Update FTS5 index
         let body_text = String::from_utf8_lossy(&req.body).to_string();
-        let _ = self.conn.execute(
+        let _ = conn.execute(
             "INSERT OR REPLACE INTO requests_fts (id, url, headers, body_text) VALUES (?1, ?2, ?3, ?4)",
             params![req.id, req.url, headers_json, body_text],
         );
@@ -129,7 +136,8 @@ impl WorkspaceStorage {
 
     pub fn save_response(&self, res: &HttpResponse) -> Result<()> {
         let headers_json = serde_json::to_string(&res.headers)?;
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR REPLACE INTO responses (request_id, status, reason, version, headers, body, elapsed_ms, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![res.request_id, res.status, res.reason, res.version, headers_json, res.body, res.elapsed_ms, res.timestamp],
         )?;
@@ -137,7 +145,8 @@ impl WorkspaceStorage {
     }
 
     pub fn get_request(&self, id: &str) -> Result<Option<HttpRequest>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, method, url, version, headers, body, timestamp FROM requests WHERE id = ?1",
         )?;
 
@@ -169,7 +178,8 @@ impl WorkspaceStorage {
     }
 
     pub fn get_response(&self, request_id: &str) -> Result<Option<HttpResponse>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT request_id, status, reason, version, headers, body, elapsed_ms, timestamp FROM responses WHERE request_id = ?1",
         )?;
 
@@ -203,7 +213,8 @@ impl WorkspaceStorage {
     }
 
     pub fn list_requests(&self, limit: usize, offset: usize) -> Result<Vec<HttpRequest>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, method, url, version, headers, body, timestamp FROM requests ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
         )?;
 
@@ -239,7 +250,8 @@ impl WorkspaceStorage {
     /// Full-text search across URLs, headers, and request bodies.
     pub fn search_requests(&self, query: &str) -> Result<Vec<String>> {
         let escaped = format!("\"{}\"", query.replace('"', "\"\""));
-        let stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let stmt = conn.prepare(
             "SELECT id FROM requests_fts WHERE requests_fts MATCH ?1 ORDER BY rank LIMIT 50",
         );
 
@@ -257,7 +269,7 @@ impl WorkspaceStorage {
 
         // Fallback to LIKE
         let pattern = format!("%{}%", query);
-        let mut s = self.conn.prepare(
+        let mut s = conn.prepare(
             "SELECT id FROM requests WHERE url LIKE ?1 OR headers LIKE ?1 ORDER BY timestamp DESC LIMIT 50",
         )?;
         let rows = s.query_map(params![pattern], |row| row.get::<_, String>(0))?;
@@ -269,7 +281,8 @@ impl WorkspaceStorage {
     }
 
     pub fn save_finding(&self, finding: &AuditFindingRecord) -> Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR REPLACE INTO audit_findings (id, request_id, category, severity, title, description, matched_data, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 finding.id,
@@ -286,7 +299,8 @@ impl WorkspaceStorage {
     }
 
     pub fn list_findings(&self) -> Result<Vec<AuditFindingRecord>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, request_id, category, severity, title, description, matched_data, timestamp FROM audit_findings ORDER BY timestamp DESC",
         )?;
 

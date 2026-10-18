@@ -163,6 +163,10 @@ impl HttpClient {
             builder = builder.header("Host", host_hdr);
         }
 
+        if !req.headers.contains_key("x-request-id") {
+            builder = builder.header("X-Request-ID", &req.id);
+        }
+
         let body = Full::new(Bytes::from(req.body.clone()));
         let hyper_req = builder
             .body(body)
