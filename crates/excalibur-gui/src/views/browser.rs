@@ -48,9 +48,20 @@ impl BrowserRenderer {
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.add_space(8.0);
-                    self.render_node(ui, root, &mut action, url);
-                    ui.add_space(24.0);
+                    ui.add_space(12.0);
+                    let available_width = ui.available_width();
+                    let content_width = available_width.min(940.0);
+                    let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(side_margin);
+                        ui.vertical(|ui| {
+                            ui.set_max_width(content_width);
+                            self.render_node(ui, root, &mut action, url);
+                        });
+                        ui.add_space(side_margin);
+                    });
+                    ui.add_space(32.0);
                 });
         }
 
@@ -292,6 +303,37 @@ impl BrowserRenderer {
                             tracing::info!("Button clicked: {}", btn_text);
                         }
                     }
+                    "img" => {
+                        let src = attributes
+                            .get("src")
+                            .or_else(|| attributes.get("data-src"))
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        if !src.is_empty() {
+                            let resolved = self.resolve_url(current_url, src);
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Image::from_uri(&resolved)
+                                    .max_width(ui.available_width().min(600.0))
+                                    .corner_radius(4.0),
+                            );
+                            ui.add_space(4.0);
+                        }
+                    }
+                    "form" => {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(22, 27, 34))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .inner_margin(Margin::same(12))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    for child in &node.children {
+                                        self.render_node(ui, child, action, current_url);
+                                    }
+                                });
+                            });
+                        ui.add_space(8.0);
+                    }
                     "input" => {
                         let input_type =
                             attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
@@ -323,8 +365,26 @@ impl BrowserRenderer {
                             });
                         } else {
                             ui.horizontal(|ui| {
-                                ui.label(format!("{}:", input_name));
-                                ui.text_edit_singleline(current_val);
+                                if input_name != "field" && input_name != "q" {
+                                    ui.label(format!("{}:", input_name));
+                                }
+                                let te = ui.add(
+                                    egui::TextEdit::singleline(current_val)
+                                        .hint_text("Search or enter query...")
+                                        .desired_width(ui.available_width().min(450.0)),
+                                );
+                                if (input_name == "q" || input_type == "search")
+                                    && (ui.button("🔍 Search").clicked()
+                                        || (te.lost_focus()
+                                            && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                                    && !current_val.is_empty()
+                                {
+                                    let search_target = format!(
+                                        "https://www.google.com/search?q={}",
+                                        current_val.replace(' ', "+")
+                                    );
+                                    *action = Some(BrowserAction::Navigate(search_target));
+                                }
                             });
                         }
                     }

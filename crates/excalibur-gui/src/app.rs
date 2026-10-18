@@ -120,8 +120,28 @@ pub struct GuiApp {
 }
 
 impl GuiApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Install loaders for web image rendering (PNG, JPEG, SVG, GIF, WEBP)
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
         let (tx, rx) = channel();
+
+        // Start background MITM proxy listener for external tools & Full Web Engine
+        tokio::spawn(async move {
+            if let Ok(ca) = excalibur_proxy::CertificateAuthority::new_ephemeral() {
+                let ca = std::sync::Arc::new(ca);
+                let (event_tx, _event_rx) = tokio::sync::mpsc::channel(256);
+                let interceptor =
+                    std::sync::Arc::new(excalibur_proxy::TrafficInterceptor::new(event_tx));
+                if let Ok(bind_addr) = "127.0.0.1:8080".parse() {
+                    if let Ok(server) =
+                        excalibur_proxy::ProxyServer::new(bind_addr, ca, interceptor, None, None)
+                    {
+                        let _ = server.run().await;
+                    }
+                }
+            }
+        });
 
         let mut app = Self {
             tabs: Vec::new(),
@@ -158,6 +178,36 @@ impl GuiApp {
 
     pub fn active_tab_mut(&mut self) -> Option<&mut BrowserTab> {
         self.tabs.iter_mut().find(|t| t.id == self.active_tab_id)
+    }
+
+    /// Launches the Full Web Engine (dedicated chromeless browser window routed via Excalibur proxy).
+    pub fn launch_full_web_engine(&self, url: &str) {
+        let edge_paths = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ];
+
+        let mut launched = false;
+        let temp_profile = std::env::temp_dir().join("excalibur_full_web_profile");
+
+        for path in edge_paths {
+            if std::path::Path::new(path).exists() {
+                let _ = std::process::Command::new(path)
+                    .arg(format!("--app={}", url))
+                    .arg("--proxy-server=http://127.0.0.1:8080")
+                    .arg("--ignore-certificate-errors")
+                    .arg(format!("--user-data-dir={}", temp_profile.display()))
+                    .spawn();
+                launched = true;
+                break;
+            }
+        }
+
+        if !launched {
+            let _ = webbrowser::open(url);
+        }
     }
 
     /// Navigates a tab to a specified URL asynchronously.
@@ -584,7 +634,7 @@ impl GuiApp {
             // Omnibox URL Text Bar
             let url_edit = ui.add(
                 egui::TextEdit::singleline(&mut self.omnibox_input)
-                    .desired_width(ui.available_width() - 80.0),
+                    .desired_width(ui.available_width() - 200.0),
             );
 
             if url_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -595,6 +645,21 @@ impl GuiApp {
             if ui.button("Go").clicked() {
                 let target = self.omnibox_input.clone();
                 self.navigate(active_id, &target);
+            }
+
+            // Dual-Engine Switcher: Launch Full Real-World Browser View
+            let full_web_btn = ui.button(
+                RichText::new("🌐 Full Web View")
+                    .color(Color32::from_rgb(88, 166, 255))
+                    .strong(),
+            );
+            if full_web_btn.clicked() {
+                let target = if self.omnibox_input.is_empty() {
+                    "https://google.com"
+                } else {
+                    &self.omnibox_input
+                };
+                self.launch_full_web_engine(target);
             }
         });
     }
