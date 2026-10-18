@@ -141,3 +141,49 @@ fn test_gui_repeater_mutation() {
     assert_eq!(app.repeater_state.method, "PUT");
     assert!(app.repeater_state.body.contains("updated"));
 }
+
+#[test]
+fn test_browser_css_rendering_pipeline() {
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { background-color: #0d1117; color: #c9d1d9; }
+                h1 { color: #58a6ff; font-size: 28px; }
+                .banner { background-color: #238636; color: #ffffff; padding: 12px; }
+                #warning { color: #f85149; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <h1>Excalibur Pure-Rust Browser</h1>
+            <div class="banner">
+                <p style="font-weight: bold; text-decoration: underline;">Secure Session Active</p>
+            </div>
+            <p id="warning">Security Alert Sample</p>
+            <span style="color: #d29922;">Warning: Untrusted certificate</span>
+            <a href="https://example.com/login" style="color: #79c0ff;">Login Portal</a>
+            <button style="color: #ffffff; background-color: #1f6feb;">Submit Audit</button>
+            <pre style="background-color: #161b22; color: #58a6ff;"><code>GET /admin HTTP/1.1</code></pre>
+            <table style="border: 1px solid #30363d;">
+                <tr><th>Header</th><th>Value</th></tr>
+                <tr><td>Content-Security-Policy</td><td>default-src 'self'</td></tr>
+            </table>
+        </body>
+        </html>
+    "#;
+
+    let dom = excalibur_dom::HtmlParser::parse(html);
+    app.tabs[0].parsed_dom = Some(dom);
+    app.tabs[0].url = "https://example.com/test".to_string();
+
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    assert_eq!(app.tabs.len(), 1);
+    assert!(app.tabs[0].parsed_dom.is_some());
+}

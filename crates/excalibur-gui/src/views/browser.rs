@@ -1,6 +1,11 @@
 use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
-use excalibur_dom::{DomNode, NodeType};
+use excalibur_dom::{CssColor, DomNode, NodeType, StyleResolver, StyleSheet};
 use std::collections::HashMap;
+
+#[inline]
+fn to_egui_color(col: CssColor) -> Color32 {
+    Color32::from_rgba_unmultiplied(col.r, col.g, col.b, col.a)
+}
 
 /// An action requested by the interactive browser view to the parent app.
 pub enum BrowserAction {
@@ -46,6 +51,8 @@ impl BrowserRenderer {
         }
 
         if let Some(root) = dom {
+            let stylesheet = StyleSheet::extract_from_dom(root);
+
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -58,7 +65,7 @@ impl BrowserRenderer {
                         ui.add_space(side_margin);
                         ui.vertical(|ui| {
                             ui.set_max_width(content_width);
-                            self.render_node(ui, root, &mut action, url);
+                            self.render_node(ui, root, &mut action, url, &stylesheet);
                         });
                         ui.add_space(side_margin);
                     });
@@ -429,65 +436,116 @@ impl BrowserRenderer {
         node: &DomNode,
         action: &mut Option<BrowserAction>,
         current_url: &str,
+        stylesheet: &StyleSheet,
     ) {
         match &node.node_type {
             NodeType::Document => {
                 for child in &node.children {
-                    self.render_node(ui, child, action, current_url);
+                    self.render_node(ui, child, action, current_url, stylesheet);
                 }
             }
             NodeType::Element { tag, attributes } => {
                 let tag_lower = tag.to_ascii_lowercase();
 
-                // Skip non-rendering head metadata
+                // Skip non-rendering metadata elements
                 if tag_lower == "head"
                     || tag_lower == "style"
                     || tag_lower == "script"
                     || tag_lower == "meta"
                     || tag_lower == "link"
+                    || tag_lower == "title"
+                    || tag_lower == "noscript"
                 {
                     return;
                 }
 
+                let style = StyleResolver::resolve(node, stylesheet);
+                if style.display_none {
+                    return;
+                }
+
+                if let Some(mt) = style.margin_top {
+                    if mt > 0.0 {
+                        ui.add_space(mt.clamp(0.0, 40.0));
+                    }
+                }
+
                 match tag_lower.as_str() {
-                    "h1" => {
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         let text = node.text_content();
-                        ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(text.trim())
-                                .size(24.0)
-                                .strong()
-                                .color(Color32::from_rgb(88, 166, 255)),
-                        );
-                        ui.add_space(6.0);
-                    }
-                    "h2" => {
-                        let text = node.text_content();
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(text.trim())
-                                .size(20.0)
-                                .strong()
-                                .color(Color32::from_rgb(121, 192, 255)),
-                        );
-                        ui.add_space(4.0);
-                    }
-                    "h3" => {
-                        let text = node.text_content();
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new(text.trim())
-                                .size(16.0)
-                                .strong()
-                                .color(Color32::from_rgb(201, 209, 217)),
-                        );
-                        ui.add_space(2.0);
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            let (default_size, default_color) = match tag_lower.as_str() {
+                                "h1" => (24.0, Color32::from_rgb(88, 166, 255)),
+                                "h2" => (20.0, Color32::from_rgb(121, 192, 255)),
+                                "h3" => (16.0, Color32::from_rgb(201, 209, 217)),
+                                "h4" => (14.0, Color32::from_rgb(201, 209, 217)),
+                                _ => (13.0, Color32::from_rgb(139, 148, 158)),
+                            };
+
+                            let font_size = style.font_size.unwrap_or(default_size);
+                            let text_color =
+                                style.color.map(to_egui_color).unwrap_or(default_color);
+
+                            let mut rich = RichText::new(trimmed).size(font_size).color(text_color);
+                            if style.font_weight_bold.unwrap_or(true) {
+                                rich = rich.strong();
+                            }
+                            if style.font_style_italic.unwrap_or(false) {
+                                rich = rich.italics();
+                            }
+                            if style.text_decoration_underline.unwrap_or(false) {
+                                rich = rich.underline();
+                            }
+
+                            if let Some(bg) = style.background_color {
+                                let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 20.0) as u8;
+                                Frame::NONE
+                                    .fill(to_egui_color(bg))
+                                    .inner_margin(Margin::symmetric(8, 4))
+                                    .corner_radius(egui::CornerRadius::same(rad))
+                                    .show(ui, |ui| {
+                                        ui.label(rich);
+                                    });
+                            } else {
+                                ui.label(rich);
+                            }
+                            ui.add_space(4.0);
+                        }
                     }
                     "p" => {
                         let text = node.text_content();
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
-                            ui.label(RichText::new(trimmed).size(14.0));
+                            let font_size = style.font_size.unwrap_or(14.0);
+                            let text_color = style
+                                .color
+                                .map(to_egui_color)
+                                .unwrap_or(Color32::from_rgb(201, 209, 217));
+
+                            let mut rich = RichText::new(trimmed).size(font_size).color(text_color);
+                            if style.font_weight_bold.unwrap_or(false) {
+                                rich = rich.strong();
+                            }
+                            if style.font_style_italic.unwrap_or(false) {
+                                rich = rich.italics();
+                            }
+                            if style.text_decoration_underline.unwrap_or(false) {
+                                rich = rich.underline();
+                            }
+
+                            if let Some(bg) = style.background_color {
+                                let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 20.0) as u8;
+                                Frame::NONE
+                                    .fill(to_egui_color(bg))
+                                    .inner_margin(Margin::same(6))
+                                    .corner_radius(egui::CornerRadius::same(rad))
+                                    .show(ui, |ui| {
+                                        ui.label(rich);
+                                    });
+                            } else {
+                                ui.label(rich);
+                            }
                             ui.add_space(4.0);
                         }
                     }
@@ -500,13 +558,82 @@ impl BrowserRenderer {
                             text.trim()
                         };
 
-                        let link_label = RichText::new(display_text)
-                            .color(Color32::from_rgb(88, 166, 255))
-                            .underline();
-                        if ui.link(link_label).clicked() && !href.is_empty() {
+                        let font_size = style.font_size.unwrap_or(14.0);
+                        let text_color = style
+                            .color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(88, 166, 255));
+
+                        let mut rich = RichText::new(display_text)
+                            .size(font_size)
+                            .color(text_color);
+                        if style.text_decoration_underline.unwrap_or(true) {
+                            rich = rich.underline();
+                        }
+                        if style.font_weight_bold.unwrap_or(false) {
+                            rich = rich.strong();
+                        }
+
+                        if ui.link(rich).clicked() && !href.is_empty() {
                             let target_url = self.resolve_url(current_url, href);
                             *action = Some(BrowserAction::Navigate(target_url));
                         }
+                    }
+                    "span" => {
+                        let has_child_elements = node
+                            .children
+                            .iter()
+                            .any(|c| matches!(c.node_type, NodeType::Element { .. }));
+                        if !has_child_elements {
+                            let text = node.text_content();
+                            let trimmed = text.trim();
+                            if !trimmed.is_empty() {
+                                let font_size = style.font_size.unwrap_or(14.0);
+                                let text_color = style
+                                    .color
+                                    .map(to_egui_color)
+                                    .unwrap_or(Color32::from_rgb(201, 209, 217));
+
+                                let mut rich =
+                                    RichText::new(trimmed).size(font_size).color(text_color);
+                                if style.font_weight_bold.unwrap_or(false) {
+                                    rich = rich.strong();
+                                }
+                                if style.font_style_italic.unwrap_or(false) {
+                                    rich = rich.italics();
+                                }
+                                if style.text_decoration_underline.unwrap_or(false) {
+                                    rich = rich.underline();
+                                }
+                                ui.label(rich);
+                            }
+                        } else {
+                            for child in &node.children {
+                                self.render_node(ui, child, action, current_url, stylesheet);
+                            }
+                        }
+                    }
+                    "strong" | "b" => {
+                        let text = node.text_content();
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            let color = style.color.map(to_egui_color).unwrap_or(Color32::WHITE);
+                            ui.label(RichText::new(trimmed).strong().color(color));
+                        }
+                    }
+                    "em" | "i" => {
+                        let text = node.text_content();
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            let color = style
+                                .color
+                                .map(to_egui_color)
+                                .unwrap_or(Color32::from_rgb(201, 209, 217));
+                            ui.label(RichText::new(trimmed).italics().color(color));
+                        }
+                    }
+                    "br" => {
+                        ui.add_space(4.0);
                     }
                     "button" => {
                         let text = node.text_content();
@@ -515,7 +642,12 @@ impl BrowserRenderer {
                         } else {
                             text.trim()
                         };
-                        if ui.button(btn_text).clicked() {
+
+                        let text_color = style.color.map(to_egui_color).unwrap_or(Color32::WHITE);
+                        let font_size = style.font_size.unwrap_or(13.0);
+                        let rich = RichText::new(btn_text).size(font_size).color(text_color);
+
+                        if ui.button(rich).clicked() {
                             tracing::info!("Button clicked: {}", btn_text);
                         }
                     }
@@ -527,24 +659,43 @@ impl BrowserRenderer {
                             .unwrap_or("");
                         if !src.is_empty() {
                             let resolved = self.resolve_url(current_url, src);
+                            let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 20.0);
                             ui.add_space(4.0);
                             ui.add(
                                 egui::Image::from_uri(&resolved)
                                     .max_width(ui.available_width().min(600.0))
-                                    .corner_radius(4.0),
+                                    .corner_radius(rad),
                             );
                             ui.add_space(4.0);
                         }
                     }
                     "form" => {
+                        let bg_col = style
+                            .background_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(22, 27, 34));
+                        let border_col = style
+                            .border_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(48, 54, 61));
+                        let border_w = style.border_width.unwrap_or(1.0);
+                        let rad = style.border_radius.unwrap_or(6.0).clamp(0.0, 20.0) as u8;
+
                         Frame::NONE
-                            .fill(Color32::from_rgb(22, 27, 34))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .fill(bg_col)
+                            .stroke(Stroke::new(border_w, border_col))
+                            .corner_radius(egui::CornerRadius::same(rad))
                             .inner_margin(Margin::same(12))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
                                     for child in &node.children {
-                                        self.render_node(ui, child, action, current_url);
+                                        self.render_node(
+                                            ui,
+                                            child,
+                                            action,
+                                            current_url,
+                                            stylesheet,
+                                        );
                                     }
                                 });
                             });
@@ -609,44 +760,96 @@ impl BrowserRenderer {
                     }
                     "pre" | "code" => {
                         let code_text = node.text_content();
+                        let bg_col = style
+                            .background_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(13, 17, 23));
+                        let border_col = style
+                            .border_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(48, 54, 61));
+                        let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 16.0) as u8;
+
                         Frame::NONE
-                            .fill(Color32::from_rgb(13, 17, 23))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .fill(bg_col)
+                            .stroke(Stroke::new(1.0_f32, border_col))
+                            .corner_radius(egui::CornerRadius::same(rad))
                             .inner_margin(Margin::same(8))
                             .show(ui, |ui| {
-                                ui.code(code_text.trim());
+                                if let Some(tc) = style.color {
+                                    ui.label(
+                                        RichText::new(code_text.trim())
+                                            .monospace()
+                                            .color(to_egui_color(tc)),
+                                    );
+                                } else {
+                                    ui.code(code_text.trim());
+                                }
                             });
                     }
                     "blockquote" => {
                         let text = node.text_content();
+                        let bg_col = style
+                            .background_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(22, 27, 34));
+                        let border_col = style
+                            .border_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(88, 166, 255));
+                        let text_col = style
+                            .color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(201, 209, 217));
+                        let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 16.0) as u8;
+
                         Frame::NONE
-                            .fill(Color32::from_rgb(22, 27, 34))
-                            .stroke(Stroke::new(2.0_f32, Color32::from_rgb(88, 166, 255)))
+                            .fill(bg_col)
+                            .stroke(Stroke::new(2.0_f32, border_col))
+                            .corner_radius(egui::CornerRadius::same(rad))
                             .inner_margin(Margin::same(8))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(text.trim()).italics());
+                                ui.label(RichText::new(text.trim()).italics().color(text_col));
                             });
                     }
                     "ul" | "ol" => {
                         ui.vertical(|ui| {
                             for child in &node.children {
                                 if child.tag() == Some("li") {
+                                    let item_style = StyleResolver::resolve(child, stylesheet);
                                     let item_text = child.text_content();
+                                    let item_color = item_style
+                                        .color
+                                        .or(style.color)
+                                        .map(to_egui_color)
+                                        .unwrap_or(Color32::from_rgb(201, 209, 217));
                                     ui.horizontal(|ui| {
-                                        ui.label("-");
-                                        ui.label(item_text.trim());
+                                        ui.label(RichText::new("-").color(item_color));
+                                        ui.label(RichText::new(item_text.trim()).color(item_color));
                                     });
                                 }
                             }
                         });
                     }
                     "table" => {
+                        let bg_col = style
+                            .background_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::TRANSPARENT);
+                        let border_col = style
+                            .border_color
+                            .map(to_egui_color)
+                            .unwrap_or(Color32::from_rgb(48, 54, 61));
+                        let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 16.0) as u8;
+
                         Frame::NONE
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .fill(bg_col)
+                            .stroke(Stroke::new(1.0_f32, border_col))
+                            .corner_radius(egui::CornerRadius::same(rad))
                             .inner_margin(Margin::same(6))
                             .show(ui, |ui| {
                                 for child in &node.children {
-                                    self.render_node(ui, child, action, current_url);
+                                    self.render_node(ui, child, action, current_url, stylesheet);
                                 }
                             });
                     }
@@ -655,24 +858,87 @@ impl BrowserRenderer {
                             for child in &node.children {
                                 let cell_tag = child.tag().unwrap_or("");
                                 if cell_tag == "td" || cell_tag == "th" {
+                                    let cell_style = StyleResolver::resolve(child, stylesheet);
                                     let is_header = cell_tag == "th";
                                     let text = child.text_content();
-                                    let rich = if is_header {
-                                        RichText::new(text.trim()).strong().color(Color32::WHITE)
+
+                                    let cell_color = cell_style
+                                        .color
+                                        .or(style.color)
+                                        .map(to_egui_color)
+                                        .unwrap_or(if is_header {
+                                            Color32::WHITE
+                                        } else {
+                                            Color32::from_rgb(201, 209, 217)
+                                        });
+                                    let mut rich = RichText::new(text.trim()).color(cell_color);
+                                    if is_header || cell_style.font_weight_bold.unwrap_or(false) {
+                                        rich = rich.strong();
+                                    }
+
+                                    if let Some(bg) = cell_style.background_color {
+                                        Frame::NONE
+                                            .fill(to_egui_color(bg))
+                                            .inner_margin(Margin::same(4))
+                                            .show(ui, |ui| {
+                                                ui.label(rich);
+                                            });
                                     } else {
-                                        RichText::new(text.trim())
-                                    };
-                                    ui.label(rich);
+                                        ui.label(rich);
+                                    }
                                     ui.separator();
                                 }
                             }
                         });
                     }
                     _ => {
-                        // Standard container (div, span, section, body, main, etc.)
-                        for child in &node.children {
-                            self.render_node(ui, child, action, current_url);
+                        // Standard containers: div, section, article, main, header, footer, body, nav, etc.
+                        let has_frame = style.background_color.is_some()
+                            || style.border_color.is_some()
+                            || style.padding.is_some();
+                        if has_frame {
+                            let mut frame = Frame::NONE;
+                            if let Some(bg) = style.background_color {
+                                frame = frame.fill(to_egui_color(bg));
+                            }
+                            if let Some(bc) = style.border_color {
+                                let bw = style.border_width.unwrap_or(1.0);
+                                frame = frame.stroke(Stroke::new(bw, to_egui_color(bc)));
+                            }
+                            if let Some(pad) = style.padding {
+                                frame =
+                                    frame.inner_margin(Margin::same(pad.clamp(0.0, 30.0) as i8));
+                            }
+                            if let Some(rad) = style.border_radius {
+                                frame = frame.corner_radius(egui::CornerRadius::same(
+                                    rad.clamp(0.0, 24.0) as u8,
+                                ));
+                            }
+
+                            frame.show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    for child in &node.children {
+                                        self.render_node(
+                                            ui,
+                                            child,
+                                            action,
+                                            current_url,
+                                            stylesheet,
+                                        );
+                                    }
+                                });
+                            });
+                        } else {
+                            for child in &node.children {
+                                self.render_node(ui, child, action, current_url, stylesheet);
+                            }
                         }
+                    }
+                }
+
+                if let Some(mb) = style.margin_bottom {
+                    if mb > 0.0 {
+                        ui.add_space(mb.clamp(0.0, 40.0));
                     }
                 }
             }
