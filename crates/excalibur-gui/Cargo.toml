@@ -19,4 +19,3 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-webbrowser = { workspace = true }

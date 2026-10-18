@@ -57,26 +57,6 @@ impl BrowserRenderer {
                         ui.add_space(side_margin);
                         ui.vertical(|ui| {
                             ui.set_max_width(content_width);
-                            Frame::NONE
-                                .fill(Color32::from_rgb(18, 22, 28))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
-                                .inner_margin(Margin::symmetric(12, 8))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("[ DEV WEB VIEW ]")
-                                                .size(13.0)
-                                                .strong()
-                                                .color(Color32::from_rgb(88, 166, 255)),
-                                        );
-                                        ui.label(
-                                            RichText::new("Pure-Rust Semantic DOM & AST Engine (Non-Chromium)")
-                                                .size(12.0)
-                                                .color(Color32::from_rgb(139, 148, 158)),
-                                        );
-                                    });
-                                });
-                            ui.add_space(10.0);
                             self.render_node(ui, root, &mut action, url);
                         });
                         ui.add_space(side_margin);

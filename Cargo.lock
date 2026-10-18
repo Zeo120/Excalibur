@@ -1159,7 +1159,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "webbrowser",
 ]
 
 [[package]]
