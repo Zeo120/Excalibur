@@ -50,13 +50,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cmd) = cli.command {
         match cmd {
             Commands::Scan { url } => {
-                println!("⚔️ Scanning target: {}", url);
+                println!("[*] Scanning target: {}", url);
             }
             Commands::Proxy { bind } => {
-                println!("⚔️ Starting MITM Proxy on: {}", bind);
+                println!("[*] Starting MITM Proxy on: {}", bind);
             }
             Commands::Repeat { request_id } => {
-                println!("⚔️ Replaying request: {}", request_id);
+                println!("[*] Replaying request: {}", request_id);
             }
         }
         return Ok(());
@@ -65,13 +65,13 @@ async fn main() -> anyhow::Result<()> {
     if cli.tui {
         let mut app = TuiApp::new();
         if let Some(target) = cli.url {
-            app.current_url = target;
+            app.navigate_to(&target);
         }
-        app.run().await?;
+        app.run()?;
     } else {
         let native_options = NativeOptions::default();
         let _ = eframe::run_native(
-            "⚔️ Excalibur",
+            "Excalibur Security Workbench",
             native_options,
             Box::new(|cc| Ok(Box::new(GuiApp::new(cc)))),
         );

@@ -2,5 +2,7 @@
 
 pub mod app;
 pub mod ui;
+pub mod views;
 
-pub use app::TuiApp;
+pub use app::{ActiveTab, AuditFindingItem, TrafficItem, TuiApp};
+pub use ui::render_ui;
