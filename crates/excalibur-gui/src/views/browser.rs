@@ -143,7 +143,7 @@ impl BrowserRenderer {
                             RichText::new("EXCALIBUR")
                                 .size(36.0)
                                 .strong()
-                                .color(Color32::from_rgb(88, 166, 255)),
+                                .color(Color32::from_rgb(56, 189, 248)),
                         );
                         ui.add_space(4.0);
                         ui.label(
@@ -151,26 +151,26 @@ impl BrowserRenderer {
                                 "Independent Security Browser & Penetration Testing Workbench",
                             )
                             .size(14.0)
-                            .color(Color32::from_rgb(139, 148, 158)),
+                            .color(Color32::from_rgb(125, 211, 252)),
                         );
                         ui.add_space(12.0);
 
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                             let badges = [
-                                ("[ NON-CHROMIUM ]", Color32::from_rgb(88, 166, 255)),
-                                ("[ PURE-RUST DOM ]", Color32::from_rgb(63, 185, 80)),
-                                ("[ ZERO VENDOR BLINK ]", Color32::from_rgb(210, 153, 34)),
+                                ("[ NON-CHROMIUM ]", Color32::from_rgb(0, 240, 255)),
+                                ("[ PURE-RUST DOM ]", Color32::from_rgb(0, 255, 157)),
+                                ("[ ZERO VENDOR BLINK ]", Color32::from_rgb(250, 204, 21)),
                                 (
                                     "[ MITM PROXY 127.0.0.1:8080 ]",
-                                    Color32::from_rgb(248, 81, 73),
+                                    Color32::from_rgb(255, 60, 90),
                                 ),
                             ];
 
                             for (badge, color) in badges {
                                 Frame::NONE
-                                    .fill(Color32::from_rgb(22, 27, 34))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                    .fill(Color32::from_rgb(8, 14, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
                                     .corner_radius(egui::CornerRadius::same(6))
                                     .inner_margin(Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
@@ -186,8 +186,8 @@ impl BrowserRenderer {
 
                     // 2. Central Quick Launch Search Bar
                     Frame::NONE
-                        .fill(Color32::from_rgb(18, 22, 28))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                        .fill(Color32::from_rgb(4, 7, 13))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(31, 80, 160)))
                         .corner_radius(egui::CornerRadius::same(10))
                         .inner_margin(Margin::symmetric(14, 10))
                         .show(ui, |ui| {
@@ -195,7 +195,7 @@ impl BrowserRenderer {
                                 ui.label(
                                     RichText::new("URI / Search:")
                                         .size(12.0)
-                                        .color(Color32::from_rgb(88, 166, 255))
+                                        .color(Color32::from_rgb(56, 189, 248))
                                         .strong(),
                                 );
 
@@ -244,7 +244,7 @@ impl BrowserRenderer {
                     let categories = [
                         (
                             "Security Testing & Labs",
-                            Color32::from_rgb(248, 81, 73),
+                            Color32::from_rgb(255, 60, 90),
                             vec![
                                 (
                                     "OWASP Foundation",
@@ -270,7 +270,7 @@ impl BrowserRenderer {
                         ),
                         (
                             "Developer & Research Standards",
-                            Color32::from_rgb(88, 166, 255),
+                            Color32::from_rgb(56, 189, 248),
                             vec![
                                 (
                                     "GitHub",
@@ -296,7 +296,7 @@ impl BrowserRenderer {
                         ),
                         (
                             "Diagnostics & Local Sandboxes",
-                            Color32::from_rgb(63, 185, 80),
+                            Color32::from_rgb(0, 255, 157),
                             vec![
                                 (
                                     "Cloudflare Trace",
@@ -330,8 +330,8 @@ impl BrowserRenderer {
 
                         for (name, url, desc) in targets {
                             Frame::NONE
-                                .fill(Color32::from_rgb(22, 27, 34))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                .fill(Color32::from_rgb(9, 14, 25))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
                                 .corner_radius(egui::CornerRadius::same(8))
                                 .inner_margin(Margin::symmetric(14, 10))
                                 .show(ui, |ui| {
@@ -346,19 +346,26 @@ impl BrowserRenderer {
                                             ui.label(
                                                 RichText::new(desc)
                                                     .size(12.0)
-                                                    .color(Color32::from_rgb(139, 148, 158)),
+                                                    .color(Color32::from_rgb(148, 163, 184)),
                                             );
                                             ui.label(
                                                 RichText::new(url)
                                                     .size(12.0)
-                                                    .color(Color32::from_rgb(88, 166, 255)),
+                                                    .color(Color32::from_rgb(56, 189, 248)),
                                             );
                                         });
 
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                if ui.button("Launch").clicked() {
+                                                if ui
+                                                    .button(
+                                                        RichText::new("Launch")
+                                                            .strong()
+                                                            .color(Color32::WHITE),
+                                                    )
+                                                    .clicked()
+                                                {
                                                     *action = Some(BrowserAction::Navigate(
                                                         url.to_string(),
                                                     ));
@@ -375,8 +382,8 @@ impl BrowserRenderer {
 
                     // 4. Engine Diagnostics Dashboard
                     Frame::NONE
-                        .fill(Color32::from_rgb(16, 20, 26))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                        .fill(Color32::from_rgb(5, 8, 15))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 52, 92)))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(12))
                         .show(ui, |ui| {
@@ -386,9 +393,12 @@ impl BrowserRenderer {
                                         RichText::new("ENGINE TELEMETRY")
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::from_rgb(88, 166, 255)),
+                                            .color(Color32::from_rgb(0, 240, 255)),
                                     );
-                                    ui.label("Hyper + Rustls 0.23 (TLS 1.3)");
+                                    ui.label(
+                                        RichText::new("Hyper + Rustls 0.23 (TLS 1.3)")
+                                            .color(Color32::from_rgb(220, 230, 245)),
+                                    );
                                 });
                                 ui.separator();
                                 ui.vertical(|ui| {
@@ -396,9 +406,12 @@ impl BrowserRenderer {
                                         RichText::new("MITM PROXY")
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::from_rgb(63, 185, 80)),
+                                            .color(Color32::from_rgb(0, 255, 157)),
                                     );
-                                    ui.label("127.0.0.1:8080 (Listening)");
+                                    ui.label(
+                                        RichText::new("127.0.0.1:8080 (Listening)")
+                                            .color(Color32::from_rgb(220, 230, 245)),
+                                    );
                                 });
                                 ui.separator();
                                 ui.vertical(|ui| {
@@ -406,9 +419,12 @@ impl BrowserRenderer {
                                         RichText::new("DOM PARSER")
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::from_rgb(210, 153, 34)),
+                                            .color(Color32::from_rgb(250, 204, 21)),
                                     );
-                                    ui.label("Pure-Rust Semantic AST");
+                                    ui.label(
+                                        RichText::new("Pure-Rust Semantic AST")
+                                            .color(Color32::from_rgb(220, 230, 245)),
+                                    );
                                 });
                                 ui.separator();
                                 ui.vertical(|ui| {
@@ -416,9 +432,12 @@ impl BrowserRenderer {
                                         RichText::new("SECURITY AUDIT")
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::from_rgb(248, 81, 73)),
+                                            .color(Color32::from_rgb(255, 60, 90)),
                                     );
-                                    ui.label("QuickJS Sinks + Passive Radar");
+                                    ui.label(
+                                        RichText::new("QuickJS Sinks + Passive Radar")
+                                            .color(Color32::from_rgb(220, 230, 245)),
+                                    );
                                 });
                             });
                         });
