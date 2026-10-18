@@ -127,6 +127,7 @@ pub struct GuiApp {
     // Async page loading channels
     pub page_tx: Sender<PageNavigationEvent>,
     pub page_rx: Receiver<PageNavigationEvent>,
+    pub egui_ctx: Option<egui::Context>,
 }
 
 impl GuiApp {
@@ -178,6 +179,7 @@ impl GuiApp {
 
             page_tx: tx,
             page_rx: rx,
+            egui_ctx: Some(cc.egui_ctx.clone()),
         };
 
         // Create initial tab and load default page
@@ -229,6 +231,7 @@ impl GuiApp {
 
             let tx = self.page_tx.clone();
             let target_url = normalized.clone();
+            let ctx_opt = self.egui_ctx.clone();
 
             tokio::spawn(async move {
                 let client = match HttpClient::new(ClientOptions::default()) {
@@ -358,6 +361,9 @@ impl GuiApp {
                             findings,
                             traffic_item,
                         })));
+                        if let Some(ctx) = ctx_opt {
+                            ctx.request_repaint();
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Navigation error for {}: {}", target_url, e);
@@ -366,6 +372,9 @@ impl GuiApp {
                             url: target_url,
                             error: e.to_string(),
                         });
+                        if let Some(ctx) = ctx_opt {
+                            ctx.request_repaint();
+                        }
                     }
                 }
             });
@@ -420,8 +429,14 @@ impl GuiApp {
     }
 
     pub fn render_panels(&mut self, ctx: &egui::Context) {
+        self.egui_ctx = Some(ctx.clone());
         apply_cyber_theme(ctx);
         self.poll_network_events();
+
+        // Continuous repaint loop for smooth 60 FPS cyber loading animations
+        if self.tabs.iter().any(|t| t.is_loading) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
 
         // 1. Top Browser Navigation Header
         egui::TopBottomPanel::top("browser_top_header").show(ctx, |ui| {
@@ -1045,6 +1060,29 @@ impl GuiApp {
                         }
                     });
                 });
+
+                if is_loading {
+                    let time = ui.input(|i| i.time);
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 2.5),
+                        egui::Sense::hover(),
+                    );
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, 1.0, Color32::from_rgb(10, 20, 36));
+
+                    let cycle = (time * 1.5).fract() as f32;
+                    let beam_width = (rect.width() * 0.35).max(40.0);
+                    let beam_x = rect.min.x + (rect.width() + beam_width) * cycle - beam_width;
+                    let beam_min_x = beam_x.max(rect.min.x);
+                    let beam_max_x = (beam_x + beam_width).min(rect.max.x);
+                    if beam_max_x > beam_min_x {
+                        let beam_rect = egui::Rect::from_min_max(
+                            egui::pos2(beam_min_x, rect.min.y),
+                            egui::pos2(beam_max_x, rect.max.y),
+                        );
+                        painter.rect_filled(beam_rect, 1.0, Color32::from_rgb(0, 240, 255));
+                    }
+                }
             });
     }
 
@@ -1177,21 +1215,26 @@ impl GuiApp {
 
     fn render_browser_content(&mut self, ui: &mut Ui) {
         let active_id = self.active_tab_id;
-        let (url, dom, is_loading, error_msg) = if let Some(tab) = self.active_tab() {
+        let (url, dom, raw_html, is_loading, error_msg) = if let Some(tab) = self.active_tab() {
             (
                 tab.url.clone(),
                 tab.parsed_dom.clone(),
+                tab.raw_html.clone(),
                 tab.is_loading,
                 tab.error_msg.clone(),
             )
         } else {
-            ("about:blank".to_string(), None, false, None)
+            ("about:blank".to_string(), None, String::new(), false, None)
         };
 
-        if let Some(action) =
-            self.browser_renderer
-                .render(ui, &url, dom.as_ref(), is_loading, error_msg.as_deref())
-        {
+        if let Some(action) = self.browser_renderer.render(
+            ui,
+            &url,
+            dom.as_ref(),
+            &raw_html,
+            is_loading,
+            error_msg.as_deref(),
+        ) {
             match action {
                 BrowserAction::Navigate(target) => {
                     self.navigate(active_id, &target);

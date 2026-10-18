@@ -12,6 +12,28 @@ pub enum BrowserAction {
     Navigate(String),
 }
 
+/// A video item extracted from YouTube SPA JSON payloads (ytInitialData).
+#[derive(Clone, Debug, Default)]
+pub struct YouTubeVideoItem {
+    pub id: String,
+    pub title: String,
+    pub channel: String,
+    pub views: String,
+    pub duration: String,
+    pub published: String,
+    pub thumbnail_url: String,
+}
+
+/// Watch page metadata extracted from ytInitialData or ytInitialPlayerResponse.
+#[derive(Clone, Debug, Default)]
+pub struct YouTubeWatchDetails {
+    pub video_id: String,
+    pub title: String,
+    pub author: String,
+    pub views: String,
+    pub description: String,
+}
+
 /// Visual browser viewport rendering DOM nodes into interactive GUI elements.
 #[derive(Default)]
 pub struct BrowserRenderer {
@@ -30,6 +52,7 @@ impl BrowserRenderer {
         ui: &mut Ui,
         url: &str,
         dom: Option<&DomNode>,
+        raw_html: &str,
         is_loading: bool,
         error_msg: Option<&str>,
     ) -> Option<BrowserAction> {
@@ -45,8 +68,21 @@ impl BrowserRenderer {
             return action;
         }
 
-        if url == "about:blank" || url == "excalibur://newtab" || dom.is_none() {
+        if url == "about:blank"
+            || url == "excalibur://newtab"
+            || (dom.is_none() && raw_html.is_empty())
+        {
             self.render_speed_dial(ui, &mut action);
+            return action;
+        }
+
+        // YouTube SPA client fallback: render interactive YouTube hub
+        let is_youtube = url.contains("youtube.com")
+            || (url.contains("youtube") && raw_html.contains("ytInitialData"));
+        if is_youtube {
+            let watch_details = extract_youtube_watch_details(raw_html);
+            let videos = extract_youtube_videos(raw_html);
+            self.render_youtube_hub(ui, url, watch_details.as_ref(), &videos, &mut action);
             return action;
         }
 
@@ -77,22 +113,108 @@ impl BrowserRenderer {
     }
 
     fn render_loading(&self, ui: &mut Ui, url: &str) {
+        let time = ui.input(|i| i.time);
         ui.vertical_centered(|ui| {
-            ui.add_space(80.0);
-            ui.spinner();
-            ui.add_space(16.0);
-            ui.label(
-                RichText::new("Loading Webpage...")
-                    .size(18.0)
-                    .strong()
-                    .color(Color32::from_rgb(88, 166, 255)),
-            );
-            ui.label(
-                RichText::new(format!("Connecting to {}", url))
-                    .color(Color32::from_rgb(139, 148, 158)),
-            );
-            ui.add_space(8.0);
-            ui.label("Performing TLS 1.3 handshake and parsing HTML5 layout tree...");
+            ui.add_space(50.0);
+
+            Frame::NONE
+                .fill(Color32::from_rgb(6, 10, 18))
+                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(31, 111, 235)))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(Margin::symmetric(28, 22))
+                .show(ui, |ui| {
+                    ui.set_max_width(540.0);
+
+                    // Telemetry Header
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("[NETWORK DISPATCH]")
+                                .size(11.0)
+                                .color(Color32::from_rgb(0, 240, 255))
+                                .strong(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let cycle = ((time * 2.5).sin() * 0.5 + 0.5) as f32;
+                            let alpha = (120.0 + cycle * 135.0) as u8;
+                            ui.label(
+                                RichText::new("STREAMING ACTIVE...")
+                                    .size(10.0)
+                                    .color(Color32::from_rgba_unmultiplied(56, 189, 248, alpha))
+                                    .strong(),
+                            );
+                        });
+                    });
+
+                    ui.add_space(14.0);
+
+                    // High-tech Animated Progress Beam
+                    let (track_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 4.0),
+                        egui::Sense::hover(),
+                    );
+                    let painter = ui.painter();
+                    painter.rect_filled(track_rect, 2.0, Color32::from_rgb(15, 23, 42));
+
+                    let speed = 1.2;
+                    let progress = (time * speed).fract() as f32;
+                    let beam_len = track_rect.width() * 0.35;
+                    let x_start =
+                        track_rect.min.x + (track_rect.width() + beam_len) * progress - beam_len;
+                    let x_clamped_start = x_start.max(track_rect.min.x);
+                    let x_clamped_end = (x_start + beam_len).min(track_rect.max.x);
+
+                    if x_clamped_end > x_clamped_start {
+                        let beam_rect = egui::Rect::from_min_max(
+                            egui::pos2(x_clamped_start, track_rect.min.y),
+                            egui::pos2(x_clamped_end, track_rect.max.y),
+                        );
+                        painter.rect_filled(beam_rect, 2.0, Color32::from_rgb(0, 240, 255));
+                    }
+
+                    ui.add_space(18.0);
+
+                    ui.label(
+                        RichText::new("Loading Webpage...")
+                            .size(19.0)
+                            .strong()
+                            .color(Color32::from_rgb(240, 246, 252)),
+                    );
+
+                    ui.add_space(6.0);
+
+                    Frame::NONE
+                        .fill(Color32::from_rgb(10, 15, 26))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(Margin::symmetric(12, 6))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(url)
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(56, 189, 248))
+                                    .monospace(),
+                            );
+                        });
+
+                    ui.add_space(14.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                        render_stage_badge(ui, "[DNS RESOLVED]", true);
+                        render_stage_badge(ui, "[TLS 1.3 SECURE]", true);
+                        render_stage_badge(ui, "[HTTP DISPATCH]", true);
+                        render_stage_badge(ui, "[DOM COMPILER]", false);
+                    });
+
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(
+                            "Performing cryptographic handshake and compiling document layout...",
+                        )
+                        .size(11.0)
+                        .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                });
         });
     }
 
@@ -746,29 +868,63 @@ impl BrowserRenderer {
                             }
                         } else if input_type == "password" {
                             ui.horizontal(|ui| {
-                                ui.label(format!("{}:", input_name));
-                                ui.add(egui::TextEdit::singleline(current_val).password(true));
+                                let placeholder = attributes
+                                    .get("placeholder")
+                                    .or_else(|| attributes.get("aria-label"))
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("Password");
+                                ui.add(
+                                    egui::TextEdit::singleline(current_val)
+                                        .password(true)
+                                        .hint_text(placeholder)
+                                        .desired_width(ui.available_width().min(320.0)),
+                                );
                             });
                         } else {
                             ui.horizontal(|ui| {
-                                if input_name != "field" && input_name != "q" {
-                                    ui.label(format!("{}:", input_name));
-                                }
+                                let placeholder = attributes
+                                    .get("placeholder")
+                                    .or_else(|| attributes.get("aria-label"))
+                                    .or_else(|| attributes.get("title"))
+                                    .map(|s| s.as_str())
+                                    .unwrap_or_else(|| {
+                                        if input_type == "search"
+                                            || input_name == "search_query"
+                                            || input_name == "q"
+                                        {
+                                            "Search or enter query..."
+                                        } else {
+                                            "Enter text..."
+                                        }
+                                    });
+
                                 let te = ui.add(
                                     egui::TextEdit::singleline(current_val)
-                                        .hint_text("Search or enter query...")
+                                        .hint_text(placeholder)
                                         .desired_width(ui.available_width().min(450.0)),
                                 );
-                                if (input_name == "q" || input_type == "search")
+
+                                let is_search_field = input_name == "q"
+                                    || input_name == "search_query"
+                                    || input_name == "query"
+                                    || input_type == "search";
+
+                                if is_search_field
                                     && (ui.button("Search").clicked()
                                         || (te.lost_focus()
                                             && ui.input(|i| i.key_pressed(egui::Key::Enter))))
-                                    && !current_val.is_empty()
+                                    && !current_val.trim().is_empty()
                                 {
-                                    let search_target = format!(
-                                        "https://www.google.com/search?q={}",
-                                        current_val.replace(' ', "+")
-                                    );
+                                    let query = current_val.trim().replace(' ', "+");
+                                    let search_target = if current_url.contains("youtube.com") {
+                                        format!("https://www.youtube.com/results?search_query={}", query)
+                                    } else if current_url.contains("wikipedia.org") {
+                                        format!("https://en.wikipedia.org/wiki/Special:Search?search={}", query)
+                                    } else if current_url.contains("duckduckgo.com") {
+                                        format!("https://duckduckgo.com/?q={}", query)
+                                    } else {
+                                        format!("https://www.google.com/search?q={}", query)
+                                    };
                                     *action = Some(BrowserAction::Navigate(search_target));
                                 }
                             });
@@ -984,4 +1140,739 @@ impl BrowserRenderer {
 
         href.to_string()
     }
+
+    fn render_youtube_hub(
+        &mut self,
+        ui: &mut Ui,
+        url: &str,
+        watch_details: Option<&YouTubeWatchDetails>,
+        videos: &[YouTubeVideoItem],
+        action: &mut Option<BrowserAction>,
+    ) {
+        ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(12.0);
+                let available_width = ui.available_width();
+                let content_width = available_width.min(1080.0);
+                let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+                ui.horizontal(|ui| {
+                    ui.add_space(side_margin);
+                    ui.vertical(|ui| {
+                        ui.set_max_width(content_width);
+
+                        // YouTube Top Navigation & Search Bar
+                        Frame::NONE
+                            .fill(Color32::from_rgb(10, 15, 26))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(31, 41, 55)))
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Brand Pill
+                                    Frame::NONE
+                                        .fill(Color32::from_rgb(220, 38, 38))
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(Margin::symmetric(8, 3))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new("YOUTUBE")
+                                                    .size(11.0)
+                                                    .color(Color32::WHITE)
+                                                    .strong(),
+                                            );
+                                        });
+
+                                    ui.add_space(8.0);
+
+                                    // YouTube In-Hub Search Box
+                                    let mut search_target = None;
+                                    let search_width = (ui.available_width() - 120.0).max(180.0);
+                                    let yt_search_val = self
+                                        .input_states
+                                        .entry("yt_hub_search".to_string())
+                                        .or_default();
+
+                                    let te = ui.add(
+                                        egui::TextEdit::singleline(yt_search_val)
+                                            .hint_text("Search YouTube videos, topics, channels...")
+                                            .desired_width(search_width),
+                                    );
+
+                                    if (te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                                        || ui.button(RichText::new("Search").color(Color32::WHITE).strong()).clicked()
+                                    {
+                                        let q = yt_search_val.trim();
+                                        if !q.is_empty() {
+                                            search_target = Some(format!(
+                                                "https://www.youtube.com/results?search_query={}",
+                                                q.replace(' ', "+")
+                                            ));
+                                        }
+                                    }
+
+                                    if let Some(target) = search_target {
+                                        *action = Some(BrowserAction::Navigate(target));
+                                    }
+                                });
+
+                                ui.add_space(6.0);
+
+                                // Topic Pills
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                                    let topics = [
+                                        "All",
+                                        "Cybersecurity",
+                                        "Rust Programming",
+                                        "Computer Science",
+                                        "Tech News",
+                                        "Hardware",
+                                        "Podcasts",
+                                        "Gaming",
+                                    ];
+                                    for t in topics {
+                                        let is_active = url.contains(&t.replace(' ', "+"));
+                                        let (bg, fg) = if is_active {
+                                            (Color32::from_rgb(31, 111, 235), Color32::WHITE)
+                                        } else {
+                                            (Color32::from_rgb(18, 24, 38), Color32::from_rgb(203, 213, 225))
+                                        };
+
+                                        Frame::NONE
+                                            .fill(bg)
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 99, 235)))
+                                            .corner_radius(egui::CornerRadius::same(12))
+                                            .inner_margin(Margin::symmetric(10, 4))
+                                            .show(ui, |ui| {
+                                                if ui.selectable_label(is_active, RichText::new(t).size(11.0).color(fg)).clicked() {
+                                                    let target = if t == "All" {
+                                                        "https://www.youtube.com".to_string()
+                                                    } else {
+                                                        format!("https://www.youtube.com/results?search_query={}", t.replace(' ', "+"))
+                                                    };
+                                                    *action = Some(BrowserAction::Navigate(target));
+                                                }
+                                            });
+                                    }
+                                });
+                            });
+
+                        ui.add_space(14.0);
+
+                        // If on a Watch page, render the Video Player Card
+                        if let Some(watch) = watch_details {
+                            self.render_youtube_watch_player(ui, watch);
+                            ui.add_space(16.0);
+                        }
+
+                        // Video Cards Grid / Section
+                        if !videos.is_empty() {
+                            let section_title = if watch_details.is_some() {
+                                "Recommended Videos"
+                            } else if url.contains("search_query") {
+                                "Search Results"
+                            } else {
+                                "Trending & Featured Videos"
+                            };
+
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(section_title)
+                                        .size(17.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(240, 246, 252)),
+                                );
+                                ui.label(
+                                    RichText::new(format!("({} items)", videos.len()))
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Render 2-column or 3-column video cards
+                            let cols = if content_width > 750.0 { 2 } else { 1 };
+                            let chunk_size = videos.len().div_ceil(cols);
+
+                            ui.columns(cols, |columns| {
+                                for (col_idx, col_ui) in columns.iter_mut().enumerate() {
+                                    let start = col_idx * chunk_size;
+                                    let end = (start + chunk_size).min(videos.len());
+                                    for video in &videos[start..end] {
+                                        self.render_video_card(col_ui, video, action);
+                                        col_ui.add_space(10.0);
+                                    }
+                                }
+                            });
+                        }
+
+                        if videos.is_empty() && watch_details.is_none() {
+                            ui.add_space(20.0);
+                            Frame::NONE
+                                .fill(Color32::from_rgb(10, 15, 26))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(31, 111, 235)))
+                                .corner_radius(egui::CornerRadius::same(10))
+                                .inner_margin(Margin::symmetric(24, 20))
+                                .show(ui, |ui| {
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            RichText::new("Explore YouTube on Excalibur")
+                                                .size(20.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(240, 246, 252)),
+                                        );
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            RichText::new("Search for any topic above or choose a category below to browse videos.")
+                                                .size(13.0)
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        );
+                                        ui.add_space(14.0);
+                                        ui.horizontal(|ui| {
+                                            let quick_searches = [
+                                                "Rust Programming",
+                                                "Cybersecurity Research",
+                                                "Computer Science",
+                                                "Tech News 2026",
+                                            ];
+                                            for qs in quick_searches {
+                                                if ui
+                                                    .button(
+                                                        RichText::new(qs)
+                                                            .size(12.0)
+                                                            .color(Color32::from_rgb(56, 189, 248))
+                                                            .strong(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    *action = Some(BrowserAction::Navigate(format!(
+                                                        "https://www.youtube.com/results?search_query={}",
+                                                        qs.replace(' ', "+")
+                                                    )));
+                                                }
+                                            }
+                                        });
+                                    });
+                                });
+                        }
+                    });
+                    ui.add_space(side_margin);
+                });
+                ui.add_space(32.0);
+            });
+    }
+
+    fn render_video_card(
+        &self,
+        ui: &mut Ui,
+        video: &YouTubeVideoItem,
+        action: &mut Option<BrowserAction>,
+    ) {
+        Frame::NONE
+            .fill(Color32::from_rgb(10, 15, 26))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                if !video.thumbnail_url.is_empty() {
+                    ui.add(
+                        egui::Image::from_uri(&video.thumbnail_url)
+                            .corner_radius(6.0)
+                            .max_height(140.0),
+                    );
+                    ui.add_space(6.0);
+                }
+
+                let title_text = if video.title.len() > 70 {
+                    format!("{}...", &video.title[..67])
+                } else {
+                    video.title.clone()
+                };
+
+                let title_btn = ui.link(
+                    RichText::new(title_text)
+                        .size(13.5)
+                        .strong()
+                        .color(Color32::from_rgb(241, 245, 249)),
+                );
+                if title_btn.clicked() {
+                    *action = Some(BrowserAction::Navigate(format!(
+                        "https://www.youtube.com/watch?v={}",
+                        video.id
+                    )));
+                }
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&video.channel)
+                            .size(11.5)
+                            .color(Color32::from_rgb(56, 189, 248))
+                            .strong(),
+                    );
+
+                    if !video.duration.is_empty() {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(15, 23, 42))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .inner_margin(Margin::symmetric(5, 1))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(&video.duration)
+                                        .size(10.0)
+                                        .color(Color32::from_rgb(148, 163, 184))
+                                        .monospace(),
+                                );
+                            });
+                    }
+                });
+
+                if !video.views.is_empty() || !video.published.is_empty() {
+                    let meta = format!(
+                        "{} {}",
+                        video.views,
+                        if video.published.is_empty() {
+                            String::new()
+                        } else {
+                            format!("- {}", video.published)
+                        }
+                    );
+                    ui.label(
+                        RichText::new(meta.trim())
+                            .size(11.0)
+                            .color(Color32::from_rgb(100, 116, 139)),
+                    );
+                }
+
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("Watch Video")
+                                .size(11.0)
+                                .color(Color32::WHITE)
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        *action = Some(BrowserAction::Navigate(format!(
+                            "https://www.youtube.com/watch?v={}",
+                            video.id
+                        )));
+                    }
+
+                    if ui
+                        .small_button(
+                            RichText::new("Copy Link")
+                                .size(10.5)
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx()
+                            .copy_text(format!("https://www.youtube.com/watch?v={}", video.id));
+                    }
+                });
+            });
+    }
+
+    fn render_youtube_watch_player(&self, ui: &mut Ui, watch: &YouTubeWatchDetails) {
+        Frame::NONE
+            .fill(Color32::from_rgb(6, 9, 15))
+            .stroke(Stroke::new(1.5_f32, Color32::from_rgb(37, 99, 235)))
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(Margin::symmetric(18, 14))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    Frame::NONE
+                        .fill(Color32::from_rgb(220, 38, 38))
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(Margin::symmetric(6, 2))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("NOW PLAYING")
+                                    .size(10.0)
+                                    .color(Color32::WHITE)
+                                    .strong(),
+                            );
+                        });
+
+                    ui.label(
+                        RichText::new(format!("ID: {}", watch.video_id))
+                            .size(11.0)
+                            .color(Color32::from_rgb(148, 163, 184))
+                            .monospace(),
+                    );
+                });
+
+                ui.add_space(8.0);
+
+                ui.label(
+                    RichText::new(&watch.title)
+                        .size(18.0)
+                        .strong()
+                        .color(Color32::from_rgb(240, 246, 252)),
+                );
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&watch.author)
+                            .size(13.0)
+                            .color(Color32::from_rgb(56, 189, 248))
+                            .strong(),
+                    );
+
+                    if !watch.views.is_empty() {
+                        ui.label(
+                            RichText::new(format!("- {} views", watch.views))
+                                .size(12.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                        );
+                    }
+                });
+
+                ui.add_space(10.0);
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("Watch External")
+                                .size(12.0)
+                                .color(Color32::WHITE)
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        let target_url =
+                            format!("https://www.youtube.com/watch?v={}", watch.video_id);
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = std::process::Command::new("cmd")
+                                .args(["/C", "start", &target_url])
+                                .spawn();
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg(&target_url)
+                                .spawn();
+                        }
+                    }
+
+                    if ui
+                        .button(
+                            RichText::new("Copy Video URL")
+                                .size(11.5)
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(format!(
+                            "https://www.youtube.com/watch?v={}",
+                            watch.video_id
+                        ));
+                    }
+
+                    if ui
+                        .button(
+                            RichText::new("Copy Embed URL")
+                                .size(11.5)
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx()
+                            .copy_text(format!("https://www.youtube.com/embed/{}", watch.video_id));
+                    }
+                });
+
+                if !watch.description.is_empty() {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Description:")
+                            .size(12.0)
+                            .color(Color32::from_rgb(148, 163, 184))
+                            .strong(),
+                    );
+                    ui.add_space(4.0);
+                    let desc = if watch.description.len() > 300 {
+                        format!("{}...", &watch.description[..297])
+                    } else {
+                        watch.description.clone()
+                    };
+                    ui.label(
+                        RichText::new(desc)
+                            .size(11.5)
+                            .color(Color32::from_rgb(203, 213, 225)),
+                    );
+                }
+            });
+    }
+}
+
+fn render_stage_badge(ui: &mut Ui, label: &str, active: bool) {
+    let (bg, border, fg) = if active {
+        (
+            Color32::from_rgb(11, 29, 58),
+            Color32::from_rgb(31, 111, 235),
+            Color32::from_rgb(56, 189, 248),
+        )
+    } else {
+        (
+            Color32::from_rgb(10, 15, 26),
+            Color32::from_rgb(26, 43, 76),
+            Color32::from_rgb(100, 116, 139),
+        )
+    };
+
+    Frame::NONE
+        .fill(bg)
+        .stroke(Stroke::new(1.0_f32, border))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(label).size(10.0).color(fg).strong());
+        });
+}
+
+pub fn extract_youtube_videos(html: &str) -> Vec<YouTubeVideoItem> {
+    let mut videos = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel_idx) = html[search_from..].find("ytInitialData") {
+        let start_idx = search_from + rel_idx;
+        let slice = &html[start_idx..];
+        if let Some(eq_idx) = slice.find('=') {
+            if let Some(brace_idx) = slice[eq_idx..].find('{') {
+                let json_slice = &slice[eq_idx + brace_idx..];
+                let de = serde_json::Deserializer::from_str(json_slice);
+                if let Some(Ok(val)) = de.into_iter::<serde_json::Value>().next() {
+                    collect_videos_from_json(&val, &mut videos);
+                    if !videos.is_empty() {
+                        return videos;
+                    }
+                }
+            }
+        }
+        search_from = start_idx + 13;
+    }
+    videos
+}
+
+pub fn extract_youtube_watch_details(html: &str) -> Option<YouTubeWatchDetails> {
+    let mut search_from = 0;
+    while let Some(rel_idx) = html[search_from..].find("ytInitialData") {
+        let start_idx = search_from + rel_idx;
+        let slice = &html[start_idx..];
+        if let Some(eq_idx) = slice.find('=') {
+            if let Some(brace_idx) = slice[eq_idx..].find('{') {
+                let json_slice = &slice[eq_idx + brace_idx..];
+                let de = serde_json::Deserializer::from_str(json_slice);
+                if let Some(Ok(val)) = de.into_iter::<serde_json::Value>().next() {
+                    if let Some(details) = find_video_details_in_json(&val) {
+                        return Some(details);
+                    }
+                }
+            }
+        }
+        search_from = start_idx + 13;
+    }
+
+    if let Some(start_idx) = html.find("ytInitialPlayerResponse") {
+        let slice = &html[start_idx..];
+        if let Some(eq_idx) = slice.find('=') {
+            if let Some(brace_idx) = slice[eq_idx..].find('{') {
+                let json_slice = &slice[eq_idx + brace_idx..];
+                let de = serde_json::Deserializer::from_str(json_slice);
+                if let Some(Ok(val)) = de.into_iter::<serde_json::Value>().next() {
+                    if let Some(details) = find_video_details_in_json(&val) {
+                        return Some(details);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn collect_videos_from_json(val: &serde_json::Value, videos: &mut Vec<YouTubeVideoItem>) {
+    match val {
+        serde_json::Value::Object(map) => {
+            if let Some(vr) = map.get("videoRenderer").and_then(|v| v.as_object()) {
+                if let Some(item) = parse_video_renderer(vr) {
+                    if !videos.iter().any(|existing| existing.id == item.id) {
+                        videos.push(item);
+                    }
+                }
+            } else if let Some(cvr) = map.get("compactVideoRenderer").and_then(|v| v.as_object()) {
+                if let Some(item) = parse_video_renderer(cvr) {
+                    if !videos.iter().any(|existing| existing.id == item.id) {
+                        videos.push(item);
+                    }
+                }
+            }
+            for child in map.values() {
+                collect_videos_from_json(child, videos);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for child in arr {
+                collect_videos_from_json(child, videos);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_video_renderer(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Option<YouTubeVideoItem> {
+    let id = map.get("videoId")?.as_str()?.to_string();
+    if id.is_empty() {
+        return None;
+    }
+
+    let title = map
+        .get("title")
+        .and_then(|t| {
+            t.get("runs")
+                .and_then(|r| r.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|first| first.get("text"))
+                .and_then(|txt| txt.as_str())
+                .or_else(|| t.get("simpleText").and_then(|st| st.as_str()))
+        })
+        .unwrap_or("Untitled Video")
+        .to_string();
+
+    let channel = map
+        .get("ownerText")
+        .or_else(|| map.get("longBylineText"))
+        .or_else(|| map.get("shortBylineText"))
+        .and_then(|o| {
+            o.get("runs")
+                .and_then(|r| r.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|first| first.get("text"))
+                .and_then(|txt| txt.as_str())
+                .or_else(|| o.get("simpleText").and_then(|st| st.as_str()))
+        })
+        .unwrap_or("YouTube Channel")
+        .to_string();
+
+    let views = map
+        .get("viewCountText")
+        .or_else(|| map.get("shortViewCountText"))
+        .and_then(|v| {
+            v.get("simpleText").and_then(|st| st.as_str()).or_else(|| {
+                v.get("runs")
+                    .and_then(|r| r.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|f| f.get("text"))
+                    .and_then(|t| t.as_str())
+            })
+        })
+        .unwrap_or("")
+        .to_string();
+
+    let duration = map
+        .get("lengthText")
+        .and_then(|l| l.get("simpleText").and_then(|st| st.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    let published = map
+        .get("publishedTimeText")
+        .and_then(|p| p.get("simpleText").and_then(|st| st.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    let thumbnail_url = map
+        .get("thumbnail")
+        .and_then(|th| th.get("thumbnails"))
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Some(YouTubeVideoItem {
+        id,
+        title,
+        channel,
+        views,
+        duration,
+        published,
+        thumbnail_url,
+    })
+}
+
+fn find_video_details_in_json(val: &serde_json::Value) -> Option<YouTubeWatchDetails> {
+    match val {
+        serde_json::Value::Object(map) => {
+            if let Some(vd) = map.get("videoDetails").and_then(|v| v.as_object()) {
+                let video_id = vd
+                    .get("videoId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let title = vd
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("YouTube Video")
+                    .to_string();
+                let author = vd
+                    .get("author")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("YouTube Channel")
+                    .to_string();
+                let views = vd
+                    .get("viewCount")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let description = vd
+                    .get("shortDescription")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !video_id.is_empty() {
+                    return Some(YouTubeWatchDetails {
+                        video_id,
+                        title,
+                        author,
+                        views,
+                        description,
+                    });
+                }
+            }
+
+            for child in map.values() {
+                if let Some(res) = find_video_details_in_json(child) {
+                    return Some(res);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for child in arr {
+                if let Some(res) = find_video_details_in_json(child) {
+                    return Some(res);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
 }

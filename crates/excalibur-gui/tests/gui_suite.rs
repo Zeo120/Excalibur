@@ -22,6 +22,7 @@ fn create_test_app() -> GuiApp {
         proxy_state: Default::default(),
         page_tx: tx,
         page_rx: rx,
+        egui_ctx: None,
     }
 }
 
@@ -186,4 +187,57 @@ fn test_browser_css_rendering_pipeline() {
 
     assert_eq!(app.tabs.len(), 1);
     assert!(app.tabs[0].parsed_dom.is_some());
+}
+
+#[test]
+fn test_youtube_initial_data_extractor() {
+    let mock_html = r#"
+        <!DOCTYPE html><html><head><script>
+        var ytInitialData = {
+            "contents": {
+                "twoColumnSearchResultsRenderer": {
+                    "primaryContents": {
+                        "sectionListRenderer": {
+                            "contents": [
+                                {
+                                    "itemSectionRenderer": {
+                                        "contents": [
+                                            {
+                                                "videoRenderer": {
+                                                    "videoId": "dQw4w9WgXcQ",
+                                                    "title": { "runs": [{ "text": "Rick Astley - Never Gonna Give You Up" }] },
+                                                    "ownerText": { "runs": [{ "text": "Rick Astley" }] },
+                                                    "lengthText": { "simpleText": "3:33" },
+                                                    "viewCountText": { "simpleText": "1.4B views" },
+                                                    "publishedTimeText": { "simpleText": "14 years ago" },
+                                                    "thumbnail": { "thumbnails": [{ "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }] }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        };
+        </script></head><body></body></html>
+    "#;
+
+    let items = excalibur_gui::views::browser::extract_youtube_videos(mock_html);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "dQw4w9WgXcQ");
+    assert_eq!(items[0].title, "Rick Astley - Never Gonna Give You Up");
+    assert_eq!(items[0].channel, "Rick Astley");
+    assert_eq!(items[0].duration, "3:33");
+    assert_eq!(items[0].views, "1.4B views");
+
+    if let Ok(content) = std::fs::read_to_string("../../target/yt_search_test.html") {
+        let live_items = excalibur_gui::views::browser::extract_youtube_videos(&content);
+        assert!(
+            !live_items.is_empty(),
+            "Search results should contain extracted video items!"
+        );
+    }
 }

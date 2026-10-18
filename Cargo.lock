@@ -1156,6 +1156,8 @@ dependencies = [
  "excalibur-dom",
  "excalibur-proxy",
  "excalibur-script",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "url",
