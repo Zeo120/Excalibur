@@ -4,6 +4,7 @@ use std::sync::mpsc::channel;
 
 fn create_test_app() -> GuiApp {
     let (tx, rx) = channel();
+    let storage = std::sync::Arc::new(excalibur_core::WorkspaceStorage::in_memory().unwrap());
     GuiApp {
         tabs: vec![BrowserTab::new(1, "https://example.com")],
         active_tab_id: 1,
@@ -20,6 +21,12 @@ fn create_test_app() -> GuiApp {
         scanner_state: Default::default(),
         dom_inspector_state: Default::default(),
         proxy_state: Default::default(),
+        storage,
+        cached_bookmarks: Vec::new(),
+        closed_tabs_history: Vec::new(),
+        omnibox_suggestions: Vec::new(),
+        show_omnibox_dropdown: false,
+        focus_omnibox: false,
         page_tx: tx,
         page_rx: rx,
         egui_ctx: None,
@@ -240,4 +247,70 @@ fn test_youtube_initial_data_extractor() {
             "Search results should contain extracted video items!"
         );
     }
+}
+
+#[test]
+fn test_browser_internal_pages_and_omnibox_and_zoom() {
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+
+    // 1. Test navigation to internal pages
+    let internal_urls = [
+        ("excalibur://newtab", "New Tab"),
+        ("excalibur://history", "History"),
+        ("excalibur://bookmarks", "Bookmarks"),
+        ("excalibur://settings", "Settings"),
+        ("excalibur://about", "About Excalibur"),
+    ];
+
+    for (url, expected_title) in internal_urls {
+        app.navigate(1, url);
+        let tab = app.active_tab().unwrap();
+        assert_eq!(tab.url, url);
+        assert_eq!(tab.title, expected_title);
+        assert!(!tab.is_loading);
+
+        // Render to verify no panics
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            app.render_panels(ctx);
+        });
+    }
+
+    // 2. Test Bookmarks and History SQLite persistence
+    let _ = app
+        .storage
+        .record_browser_visit("https://rust-lang.org", "Rust Programming Language");
+    let _ = app
+        .storage
+        .add_browser_bookmark("https://rust-lang.org", "Rust Language", "Favorites");
+    assert!(app
+        .storage
+        .is_browser_bookmarked("https://rust-lang.org")
+        .unwrap());
+
+    app.cached_bookmarks = app.storage.list_browser_bookmarks().unwrap();
+    assert!(app
+        .cached_bookmarks
+        .iter()
+        .any(|b| b.url == "https://rust-lang.org"));
+
+    // 3. Test Omnibox search suggestions
+    let suggestions = app.storage.search_omnibox("rust", 5).unwrap();
+    assert!(!suggestions.is_empty());
+    assert!(suggestions.iter().any(|s| s.url.contains("rust-lang.org")));
+
+    // 4. Test Zoom and Find In Page toggling
+    {
+        let tab = app.active_tab_mut().unwrap();
+        tab.zoom = 1.25;
+        tab.show_find = true;
+        tab.find_query = "Rust".to_string();
+    }
+    assert_eq!(app.active_tab().unwrap().zoom, 1.25);
+    assert!(app.active_tab().unwrap().show_find);
+    assert_eq!(app.active_tab().unwrap().find_query, "Rust");
+
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
 }

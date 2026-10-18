@@ -14,10 +14,12 @@ use excalibur_audit::ResponseAuditor;
 use excalibur_core::{
     client::{ClientOptions, HttpClient},
     network::HttpRequest,
+    storage::{BrowserBookmarkEntry, OmniboxMatch, OmniboxMatchType, WorkspaceStorage},
 };
 use excalibur_dom::{DomNode, HtmlParser};
 use excalibur_script::JsRuntime;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct BrowserTab {
@@ -32,6 +34,9 @@ pub struct BrowserTab {
     pub status_code: Option<u16>,
     pub elapsed_ms: Option<u64>,
     pub error_msg: Option<String>,
+    pub zoom: f32,
+    pub show_find: bool,
+    pub find_query: String,
 }
 
 impl BrowserTab {
@@ -54,6 +59,9 @@ impl BrowserTab {
             status_code: None,
             elapsed_ms: None,
             error_msg: None,
+            zoom: 1.0,
+            show_find: false,
+            find_query: String::new(),
         }
     }
 }
@@ -124,6 +132,14 @@ pub struct GuiApp {
     pub dom_inspector_state: DomInspectorState,
     pub proxy_state: ProxyManagerState,
 
+    // Storage and persistent browser engine state
+    pub storage: Arc<WorkspaceStorage>,
+    pub cached_bookmarks: Vec<BrowserBookmarkEntry>,
+    pub closed_tabs_history: Vec<String>,
+    pub omnibox_suggestions: Vec<OmniboxMatch>,
+    pub show_omnibox_dropdown: bool,
+    pub focus_omnibox: bool,
+
     // Async page loading channels
     pub page_tx: Sender<PageNavigationEvent>,
     pub page_rx: Receiver<PageNavigationEvent>,
@@ -140,17 +156,39 @@ impl GuiApp {
 
         let (tx, rx) = channel();
 
+        // Initialize persistent SQLite workspace storage
+        let storage = match WorkspaceStorage::open("excalibur_browser.db") {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                tracing::warn!("Falling back to in-memory workspace storage: {}", e);
+                Arc::new(
+                    WorkspaceStorage::in_memory()
+                        .expect("Failed to initialize in-memory workspace storage"),
+                )
+            }
+        };
+
+        let cached_bookmarks = storage.list_browser_bookmarks().unwrap_or_default();
+        let initial_layout = match storage.get_browser_setting("tab_layout") {
+            Ok(Some(ref l)) if l == "sidebar" => TabNavLayout::Sidebar,
+            _ => TabNavLayout::Top,
+        };
+
         // Start background MITM proxy listener for external tools & Full Web Engine
+        let proxy_storage = storage.clone();
         tokio::spawn(async move {
             if let Ok(ca) = excalibur_proxy::CertificateAuthority::new_ephemeral() {
-                let ca = std::sync::Arc::new(ca);
+                let ca = Arc::new(ca);
                 let (event_tx, _event_rx) = tokio::sync::mpsc::channel(256);
-                let interceptor =
-                    std::sync::Arc::new(excalibur_proxy::TrafficInterceptor::new(event_tx));
+                let interceptor = Arc::new(excalibur_proxy::TrafficInterceptor::new(event_tx));
                 if let Ok(bind_addr) = "127.0.0.1:8080".parse() {
-                    if let Ok(server) =
-                        excalibur_proxy::ProxyServer::new(bind_addr, ca, interceptor, None, None)
-                    {
+                    if let Ok(server) = excalibur_proxy::ProxyServer::new(
+                        bind_addr,
+                        ca,
+                        interceptor,
+                        Some(proxy_storage),
+                        None,
+                    ) {
                         let _ = server.run().await;
                     }
                 }
@@ -164,7 +202,7 @@ impl GuiApp {
             omnibox_input: "https://example.com".to_string(),
             browser_renderer: BrowserRenderer::new(),
 
-            tab_nav_layout: TabNavLayout::Top,
+            tab_nav_layout: initial_layout,
             show_favorites_bar: true,
 
             x_mode_enabled: false,
@@ -176,6 +214,13 @@ impl GuiApp {
             scanner_state: ScannerViewState::default(),
             dom_inspector_state: DomInspectorState::default(),
             proxy_state: ProxyManagerState::default(),
+
+            storage,
+            cached_bookmarks,
+            closed_tabs_history: Vec::new(),
+            omnibox_suggestions: Vec::new(),
+            show_omnibox_dropdown: false,
+            focus_omnibox: false,
 
             page_tx: tx,
             page_rx: rx,
@@ -200,7 +245,14 @@ impl GuiApp {
 
     /// Navigates a tab to a specified URL asynchronously.
     pub fn navigate(&mut self, tab_id: usize, url: &str) {
-        let normalized = if url == "about:blank" || url == "excalibur://newtab" {
+        let normalized = if url == "about:blank"
+            || url == "excalibur://newtab"
+            || url == "excalibur://history"
+            || url == "excalibur://bookmarks"
+            || url == "excalibur://settings"
+            || url == "excalibur://about"
+            || url.starts_with("excalibur://")
+        {
             url.to_string()
         } else if !url.starts_with("http://") && !url.starts_with("https://") {
             format!("https://{}", url)
@@ -221,13 +273,48 @@ impl GuiApp {
 
             self.omnibox_input = normalized.clone();
 
-            if normalized == "about:blank" || normalized == "excalibur://newtab" {
+            if normalized == "about:blank"
+                || normalized == "excalibur://newtab"
+                || normalized.starts_with("excalibur://")
+            {
                 tab.is_loading = false;
-                tab.title = "New Tab".to_string();
+                tab.title = match normalized.as_str() {
+                    "excalibur://history" => "History".to_string(),
+                    "excalibur://bookmarks" => "Bookmarks".to_string(),
+                    "excalibur://settings" => "Settings".to_string(),
+                    "excalibur://about" => "About Excalibur".to_string(),
+                    _ => "New Tab".to_string(),
+                };
                 tab.parsed_dom = None;
                 tab.raw_html.clear();
                 return;
             }
+
+            let ua_preset = self
+                .storage
+                .get_browser_setting("user_agent_preset")
+                .unwrap_or_default()
+                .unwrap_or_else(|| "Excalibur".to_string());
+
+            let user_agent = match ua_preset.as_str() {
+                "Chrome" => {
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+                        .to_string()
+                }
+                "Firefox" => {
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0"
+                        .to_string()
+                }
+                "Safari" => {
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15"
+                        .to_string()
+                }
+                "Curl" => "curl/8.8.0".to_string(),
+                _ => {
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0 (Security Browser; Non-Chromium)"
+                        .to_string()
+                }
+            };
 
             let tx = self.page_tx.clone();
             let target_url = normalized.clone();
@@ -243,10 +330,7 @@ impl GuiApp {
                 };
 
                 let mut req = HttpRequest::new("GET", &target_url);
-                req.headers.append(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0 (Security Browser)",
-                );
+                req.headers.append("User-Agent", &user_agent);
                 req.headers.append(
                     "Accept",
                     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -387,6 +471,15 @@ impl GuiApp {
                 PageNavigationEvent::Success(loaded) => {
                     let tab_id = loaded.tab_id;
                     let loaded_url = loaded.url.clone();
+                    let loaded_title = loaded.title.clone();
+
+                    // Record history in persistent SQLite storage
+                    let _ = self
+                        .storage
+                        .record_browser_visit(&loaded_url, &loaded_title);
+                    self.cached_bookmarks =
+                        self.storage.list_browser_bookmarks().unwrap_or_default();
+
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.is_loading = false;
                         tab.error_msg = None;
@@ -395,7 +488,7 @@ impl GuiApp {
                         tab.elapsed_ms = Some(loaded.elapsed_ms);
                         tab.raw_html = loaded.raw_html;
                         tab.parsed_dom = Some(loaded.parsed_dom);
-                        tab.title = loaded.title;
+                        tab.title = loaded_title;
                     }
 
                     if self.active_tab_id == tab_id {
@@ -428,9 +521,190 @@ impl GuiApp {
         }
     }
 
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        let (
+            ctrl,
+            shift,
+            key_t,
+            key_w,
+            key_l,
+            key_r,
+            key_h,
+            key_d,
+            key_f,
+            key_plus,
+            key_minus,
+            key_0,
+            key_f5,
+            key_f6,
+        ) = ctx.input(|i| {
+            let ctrl = i.modifiers.command || i.modifiers.ctrl;
+            let shift = i.modifiers.shift;
+            (
+                ctrl,
+                shift,
+                i.key_pressed(egui::Key::T),
+                i.key_pressed(egui::Key::W),
+                i.key_pressed(egui::Key::L),
+                i.key_pressed(egui::Key::R),
+                i.key_pressed(egui::Key::H),
+                i.key_pressed(egui::Key::D),
+                i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
+                i.key_pressed(egui::Key::Minus),
+                i.key_pressed(egui::Key::Num0),
+                i.key_pressed(egui::Key::F5),
+                i.key_pressed(egui::Key::F6),
+            )
+        });
+
+        // Ctrl+T: New Tab
+        if ctrl && !shift && key_t {
+            let new_id = self.next_tab_id;
+            self.next_tab_id += 1;
+            self.tabs
+                .push(BrowserTab::new(new_id, "excalibur://newtab"));
+            self.active_tab_id = new_id;
+            self.omnibox_input = "excalibur://newtab".to_string();
+        }
+
+        // Ctrl+Shift+T: Reopen closed tab
+        if ctrl && shift && key_t {
+            if let Some(reopen_url) = self.closed_tabs_history.pop() {
+                let new_id = self.next_tab_id;
+                self.next_tab_id += 1;
+                self.tabs.push(BrowserTab::new(new_id, &reopen_url));
+                self.active_tab_id = new_id;
+                self.navigate(new_id, &reopen_url);
+            }
+        }
+
+        // Ctrl+W: Close active tab
+        if ctrl && !shift && key_w && self.tabs.len() > 1 {
+            let active_id = self.active_tab_id;
+            if let Some(tab) = self.tabs.iter().find(|t| t.id == active_id) {
+                self.closed_tabs_history.push(tab.url.clone());
+            }
+            self.tabs.retain(|t| t.id != active_id);
+            if let Some(first) = self.tabs.first() {
+                self.active_tab_id = first.id;
+                self.omnibox_input = first.url.clone();
+            }
+        }
+
+        // Ctrl+L or F6: Focus omnibox
+        if (ctrl && key_l) || key_f6 {
+            self.focus_omnibox = true;
+        }
+
+        // Ctrl+R or F5: Reload active tab
+        if (ctrl && key_r) || key_f5 {
+            let active_id = self.active_tab_id;
+            let current_url = self.omnibox_input.clone();
+            self.navigate(active_id, &current_url);
+        }
+
+        // Ctrl+H: Open History
+        if ctrl && !shift && key_h {
+            let active_id = self.active_tab_id;
+            self.navigate(active_id, "excalibur://history");
+        }
+
+        // Ctrl+D: Toggle Bookmark
+        if ctrl && !shift && key_d {
+            let active_url = self.active_tab().map(|t| t.url.clone()).unwrap_or_default();
+            let active_title = self
+                .active_tab()
+                .map(|t| t.title.clone())
+                .unwrap_or_default();
+            if !active_url.is_empty() && active_url != "about:blank" {
+                if self.cached_bookmarks.iter().any(|b| b.url == active_url) {
+                    let _ = self.storage.remove_browser_bookmark(&active_url);
+                } else {
+                    let _ =
+                        self.storage
+                            .add_browser_bookmark(&active_url, &active_title, "Favorites");
+                }
+                self.cached_bookmarks = self.storage.list_browser_bookmarks().unwrap_or_default();
+            }
+        }
+
+        // Ctrl+F: Toggle In-Page Search
+        if ctrl && !shift && key_f {
+            if let Some(tab) = self.active_tab_mut() {
+                tab.show_find = !tab.show_find;
+            }
+        }
+
+        // Ctrl++: Zoom in
+        if ctrl && key_plus {
+            if let Some(tab) = self.active_tab_mut() {
+                tab.zoom = (tab.zoom + 0.1).min(2.5);
+            }
+        }
+
+        // Ctrl+-: Zoom out
+        if ctrl && key_minus {
+            if let Some(tab) = self.active_tab_mut() {
+                tab.zoom = (tab.zoom - 0.1).max(0.6);
+            }
+        }
+
+        // Ctrl+0: Reset zoom
+        if ctrl && key_0 {
+            if let Some(tab) = self.active_tab_mut() {
+                tab.zoom = 1.0;
+            }
+        }
+
+        // Ctrl+Tab and Ctrl+Shift+Tab
+        let tab_cycle = ctx.input(|i| {
+            (
+                i.modifiers.command || i.modifiers.ctrl,
+                i.modifiers.shift,
+                i.key_pressed(egui::Key::Tab),
+            )
+        });
+        if tab_cycle.0 && tab_cycle.2 {
+            if let Some(idx) = self.tabs.iter().position(|t| t.id == self.active_tab_id) {
+                let new_idx = if tab_cycle.1 {
+                    if idx == 0 {
+                        self.tabs.len() - 1
+                    } else {
+                        idx - 1
+                    }
+                } else {
+                    (idx + 1) % self.tabs.len()
+                };
+                self.active_tab_id = self.tabs[new_idx].id;
+                self.omnibox_input = self.tabs[new_idx].url.clone();
+            }
+        }
+
+        // Ctrl+1..9 direct tab jump
+        let num_keys = [
+            (egui::Key::Num1, 0),
+            (egui::Key::Num2, 1),
+            (egui::Key::Num3, 2),
+            (egui::Key::Num4, 3),
+            (egui::Key::Num5, 4),
+            (egui::Key::Num6, 5),
+            (egui::Key::Num7, 6),
+            (egui::Key::Num8, 7),
+            (egui::Key::Num9, 8),
+        ];
+        for (k, target_idx) in num_keys {
+            if ctrl && ctx.input(|i| i.key_pressed(k)) && target_idx < self.tabs.len() {
+                self.active_tab_id = self.tabs[target_idx].id;
+                self.omnibox_input = self.tabs[target_idx].url.clone();
+            }
+        }
+    }
+
     pub fn render_panels(&mut self, ctx: &egui::Context) {
         self.egui_ctx = Some(ctx.clone());
         apply_cyber_theme(ctx);
+        self.handle_keyboard_shortcuts(ctx);
         self.poll_network_events();
 
         // Continuous repaint loop for smooth 60 FPS cyber loading animations
@@ -796,12 +1070,12 @@ impl GuiApp {
         }
     }
 
-    fn normalize_target(raw: &str) -> String {
+    fn normalize_target(&self, raw: &str) -> String {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             "about:blank".to_string()
         } else if trimmed == "about:blank"
-            || trimmed == "excalibur://newtab"
+            || trimmed.starts_with("excalibur://")
             || trimmed.starts_with("http://")
             || trimmed.starts_with("https://")
         {
@@ -809,16 +1083,25 @@ impl GuiApp {
         } else if trimmed.contains('.') && !trimmed.contains(' ') {
             format!("https://{}", trimmed)
         } else {
-            format!(
-                "https://html.duckduckgo.com/html/?q={}",
-                trimmed.replace(' ', "+")
-            )
+            let engine = self
+                .storage
+                .get_browser_setting("search_engine")
+                .unwrap_or_default()
+                .unwrap_or_else(|| "DuckDuckGo".to_string());
+            let encoded = trimmed.replace(' ', "+");
+            match engine.as_str() {
+                "Google" => format!("https://www.google.com/search?q={}", encoded),
+                "Brave" => format!("https://search.brave.com/search?q={}", encoded),
+                "SearXNG" => format!("https://searx.be/search?q={}", encoded),
+                "YouTube" => format!("https://www.youtube.com/results?search_query={}", encoded),
+                _ => format!("https://html.duckduckgo.com/html/?q={}", encoded),
+            }
         }
     }
 
     fn render_omnibox_bar(&mut self, ui: &mut Ui) {
         let active_id = self.active_tab_id;
-        let (can_back, can_fwd, is_https, is_internal, is_loading) =
+        let (can_back, can_fwd, is_https, is_internal, is_loading, current_url, current_title) =
             if let Some(tab) = self.active_tab() {
                 (
                     tab.history_idx > 0,
@@ -826,10 +1109,22 @@ impl GuiApp {
                     tab.url.starts_with("https://"),
                     tab.url.starts_with("about:") || tab.url.starts_with("excalibur:"),
                     tab.is_loading,
+                    tab.url.clone(),
+                    tab.title.clone(),
                 )
             } else {
-                (false, false, false, false, false)
+                (
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    String::new(),
+                    String::new(),
+                )
             };
+
+        let is_bookmarked = self.cached_bookmarks.iter().any(|b| b.url == current_url);
 
         Frame::NONE
             .fill(Color32::from_rgb(8, 12, 22))
@@ -917,8 +1212,10 @@ impl GuiApp {
                     ui.add_space(4.0);
 
                     // Central Omnibox Pill
-                    let omnibox_width = (ui.available_width() - 170.0).max(180.0);
+                    let omnibox_width = (ui.available_width() - 340.0).max(200.0);
                     let mut navigate_target = None;
+                    let mut te_rect_opt = None;
+                    let mut te_has_focus = false;
 
                     Frame::NONE
                         .fill(Color32::from_rgb(4, 7, 13))
@@ -985,16 +1282,72 @@ impl GuiApp {
                                 let te = ui.add(
                                     egui::TextEdit::singleline(&mut self.omnibox_input)
                                         .hint_text("Search or enter web address...")
-                                        .desired_width(ui.available_width() - 85.0),
+                                        .desired_width(ui.available_width() - 120.0),
                                 );
+
+                                te_rect_opt = Some(te.rect);
+                                te_has_focus = te.has_focus();
+
+                                if self.focus_omnibox {
+                                    te.request_focus();
+                                    self.focus_omnibox = false;
+                                }
+
+                                if te.changed() {
+                                    if !self.omnibox_input.trim().is_empty() {
+                                        self.omnibox_suggestions = self
+                                            .storage
+                                            .search_omnibox(&self.omnibox_input, 6)
+                                            .unwrap_or_default();
+                                        self.show_omnibox_dropdown =
+                                            !self.omnibox_suggestions.is_empty();
+                                    } else {
+                                        self.show_omnibox_dropdown = false;
+                                    }
+                                }
 
                                 if te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
                                 {
                                     navigate_target = Some(self.omnibox_input.clone());
+                                    self.show_omnibox_dropdown = false;
                                 }
 
                                 if is_loading {
                                     ui.spinner();
+                                }
+
+                                // Bookmark Star button [*]
+                                let star_text = if is_bookmarked {
+                                    RichText::new("[*]")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(0, 240, 255))
+                                        .strong()
+                                } else {
+                                    RichText::new("[+]")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(148, 163, 184))
+                                };
+
+                                let star_tooltip = if is_bookmarked {
+                                    "Bookmarked (Click to remove)"
+                                } else {
+                                    "Bookmark this page"
+                                };
+
+                                if ui.button(star_text).on_hover_text(star_tooltip).clicked() {
+                                    if is_bookmarked {
+                                        let _ = self.storage.remove_browser_bookmark(&current_url);
+                                    } else if !current_url.is_empty()
+                                        && current_url != "about:blank"
+                                    {
+                                        let _ = self.storage.add_browser_bookmark(
+                                            &current_url,
+                                            &current_title,
+                                            "Favorites",
+                                        );
+                                    }
+                                    self.cached_bookmarks =
+                                        self.storage.list_browser_bookmarks().unwrap_or_default();
                                 }
 
                                 if ui
@@ -1013,17 +1366,172 @@ impl GuiApp {
                                     .clicked()
                                 {
                                     navigate_target = Some(self.omnibox_input.clone());
+                                    self.show_omnibox_dropdown = false;
                                 }
                             });
                         });
 
+                    // Render floating autocomplete suggestions below omnibox
+                    if self.show_omnibox_dropdown
+                        && te_has_focus
+                        && !self.omnibox_suggestions.is_empty()
+                    {
+                        if let Some(te_rect) = te_rect_opt {
+                            let dropdown_pos = egui::pos2(te_rect.min.x, te_rect.max.y + 6.0);
+                            let dropdown_width = te_rect.width().max(380.0);
+                            let mut selected_suggestion = None;
+
+                            egui::Area::new(egui::Id::new("omnibox_autocomplete_popup"))
+                                .fixed_pos(dropdown_pos)
+                                .order(egui::Order::Foreground)
+                                .show(ui.ctx(), |ui| {
+                                    Frame::NONE
+                                        .fill(Color32::from_rgb(6, 10, 18))
+                                        .stroke(Stroke::new(
+                                            1.5_f32,
+                                            Color32::from_rgb(31, 111, 235),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(8))
+                                        .inner_margin(Margin::symmetric(10, 6))
+                                        .show(ui, |ui| {
+                                            ui.set_width(dropdown_width);
+                                            ui.vertical(|ui| {
+                                                for item in &self.omnibox_suggestions {
+                                                    let (badge, badge_color) = match item.match_type
+                                                    {
+                                                        OmniboxMatchType::Bookmark => (
+                                                            "[BOOKMARK]",
+                                                            Color32::from_rgb(0, 240, 255),
+                                                        ),
+                                                        OmniboxMatchType::History => (
+                                                            "[HISTORY]",
+                                                            Color32::from_rgb(56, 189, 248),
+                                                        ),
+                                                        OmniboxMatchType::SearchSuggestion => (
+                                                            "[SEARCH]",
+                                                            Color32::from_rgb(0, 255, 157),
+                                                        ),
+                                                    };
+
+                                                    let resp = ui.horizontal(|ui| {
+                                                        ui.label(
+                                                            RichText::new(badge)
+                                                                .size(10.0)
+                                                                .strong()
+                                                                .color(badge_color),
+                                                        );
+                                                        ui.label(
+                                                            RichText::new(&item.title)
+                                                                .size(12.5)
+                                                                .strong()
+                                                                .color(Color32::from_rgb(
+                                                                    240, 246, 252,
+                                                                )),
+                                                        );
+                                                        ui.label(
+                                                            RichText::new(&item.url)
+                                                                .size(11.0)
+                                                                .color(Color32::from_rgb(
+                                                                    100, 116, 139,
+                                                                )),
+                                                        );
+                                                    });
+
+                                                    if resp
+                                                        .response
+                                                        .interact(egui::Sense::click())
+                                                        .clicked()
+                                                    {
+                                                        selected_suggestion =
+                                                            Some(item.url.clone());
+                                                    }
+                                                    ui.add_space(3.0);
+                                                }
+                                            });
+                                        });
+                                });
+
+                            if let Some(target) = selected_suggestion {
+                                self.omnibox_input = target.clone();
+                                self.show_omnibox_dropdown = false;
+                                navigate_target = Some(target);
+                            }
+                        }
+                    }
+
                     if let Some(target) = navigate_target {
-                        let normalized = Self::normalize_target(&target);
+                        let normalized = self.normalize_target(&target);
                         self.navigate(active_id, &normalized);
                     }
 
                     // Right Toolbar Cluster
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Zoom Indicator
+                        let zoom_pct = if let Some(tab) = self.active_tab() {
+                            (tab.zoom * 100.0).round() as i32
+                        } else {
+                            100
+                        };
+                        if ui
+                            .button(
+                                RichText::new(format!("[{}%]", zoom_pct))
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(125, 211, 252)),
+                            )
+                            .on_hover_text("Content Zoom (Click to cycle, Ctrl++/Ctrl+- to adjust)")
+                            .clicked()
+                        {
+                            if let Some(tab) = self.active_tab_mut() {
+                                tab.zoom = match zoom_pct {
+                                    100 => 1.25,
+                                    125 => 1.5,
+                                    150 => 0.8,
+                                    _ => 1.0,
+                                };
+                            }
+                        }
+
+                        // Find in Page
+                        if ui
+                            .button(
+                                RichText::new("[Find]")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(56, 189, 248)),
+                            )
+                            .on_hover_text("Find in Page (Ctrl+F)")
+                            .clicked()
+                        {
+                            if let Some(tab) = self.active_tab_mut() {
+                                tab.show_find = !tab.show_find;
+                            }
+                        }
+
+                        // History
+                        if ui
+                            .button(
+                                RichText::new("[History]")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(56, 189, 248)),
+                            )
+                            .on_hover_text("Browsing History (Ctrl+H)")
+                            .clicked()
+                        {
+                            self.navigate(active_id, "excalibur://history");
+                        }
+
+                        // Settings
+                        if ui
+                            .button(
+                                RichText::new("[Settings]")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(56, 189, 248)),
+                            )
+                            .on_hover_text("Browser Settings")
+                            .clicked()
+                        {
+                            self.navigate(active_id, "excalibur://settings");
+                        }
+
                         let fav_text = if self.show_favorites_bar {
                             RichText::new("[Favs: On]").color(Color32::from_rgb(56, 189, 248))
                         } else {
@@ -1102,52 +1610,46 @@ impl GuiApp {
                             .color(Color32::from_rgb(56, 189, 248)),
                     );
 
-                    let shortcuts = [
-                        ("OWASP", "https://owasp.org", Color32::from_rgb(0, 240, 255)),
-                        (
-                            "PortSwigger",
-                            "https://portswigger.net/web-security",
-                            Color32::from_rgb(251, 146, 60),
-                        ),
-                        (
-                            "HackerNews",
-                            "https://news.ycombinator.com",
-                            Color32::from_rgb(248, 113, 113),
-                        ),
-                        (
-                            "GitHub",
-                            "https://github.com",
-                            Color32::from_rgb(192, 132, 252),
-                        ),
-                        (
-                            "Example",
-                            "https://example.com",
-                            Color32::from_rgb(45, 212, 191),
-                        ),
-                        (
-                            "Cloudflare",
-                            "https://cloudflare.com/cdn-cgi/trace",
-                            Color32::from_rgb(56, 189, 248),
-                        ),
-                        (
-                            "HTTPBin",
-                            "https://httpbin.org/html",
-                            Color32::from_rgb(52, 211, 153),
-                        ),
-                        (
-                            "Local Proxy",
-                            "http://127.0.0.1:8080",
-                            Color32::from_rgb(250, 204, 21),
-                        ),
-                    ];
-
-                    for (name, target, color) in shortcuts {
+                    let mut navigate_to = None;
+                    for bm in &self.cached_bookmarks {
+                        let label = if bm.title.is_empty() {
+                            &bm.url
+                        } else {
+                            &bm.title
+                        };
+                        let display_label = if label.len() > 20 {
+                            format!("{}...", &label[..18])
+                        } else {
+                            label.to_string()
+                        };
                         if ui
-                            .button(RichText::new(name).size(11.0).strong().color(color))
+                            .button(
+                                RichText::new(display_label)
+                                    .size(11.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(125, 211, 252)),
+                            )
+                            .on_hover_text(format!("{}\nFolder: {}", bm.url, bm.folder))
                             .clicked()
                         {
-                            self.navigate(active_id, target);
+                            navigate_to = Some(bm.url.clone());
                         }
+                    }
+
+                    if ui
+                        .button(
+                            RichText::new("[+ Bookmarks]")
+                                .size(11.0)
+                                .color(Color32::from_rgb(0, 240, 255)),
+                        )
+                        .on_hover_text("Open Bookmarks Manager (excalibur://bookmarks)")
+                        .clicked()
+                    {
+                        navigate_to = Some("excalibur://bookmarks".to_string());
+                    }
+
+                    if let Some(target) = navigate_to {
+                        self.navigate(active_id, &target);
                     }
                 });
             });
@@ -1215,17 +1717,30 @@ impl GuiApp {
 
     fn render_browser_content(&mut self, ui: &mut Ui) {
         let active_id = self.active_tab_id;
-        let (url, dom, raw_html, is_loading, error_msg) = if let Some(tab) = self.active_tab() {
-            (
-                tab.url.clone(),
-                tab.parsed_dom.clone(),
-                tab.raw_html.clone(),
-                tab.is_loading,
-                tab.error_msg.clone(),
-            )
-        } else {
-            ("about:blank".to_string(), None, String::new(), false, None)
-        };
+        let (url, dom, raw_html, is_loading, error_msg, zoom, show_find, find_query) =
+            if let Some(tab) = self.active_tab() {
+                (
+                    tab.url.clone(),
+                    tab.parsed_dom.clone(),
+                    tab.raw_html.clone(),
+                    tab.is_loading,
+                    tab.error_msg.clone(),
+                    tab.zoom,
+                    tab.show_find,
+                    tab.find_query.clone(),
+                )
+            } else {
+                (
+                    "about:blank".to_string(),
+                    None,
+                    String::new(),
+                    false,
+                    None,
+                    1.0,
+                    false,
+                    String::new(),
+                )
+            };
 
         if let Some(action) = self.browser_renderer.render(
             ui,
@@ -1234,10 +1749,94 @@ impl GuiApp {
             &raw_html,
             is_loading,
             error_msg.as_deref(),
+            &self.storage,
+            zoom,
+            &find_query,
         ) {
             match action {
                 BrowserAction::Navigate(target) => {
                     self.navigate(active_id, &target);
+                }
+            }
+        }
+
+        // Floating In-Page Search Overlay (Ctrl+F)
+        if show_find {
+            let mut close_find = false;
+            let mut query_changed = None;
+            let screen_rect = ui.clip_rect();
+            let overlay_pos = egui::pos2(screen_rect.max.x - 340.0, screen_rect.min.y + 4.0);
+
+            egui::Area::new(egui::Id::new("find_in_page_overlay"))
+                .fixed_pos(overlay_pos)
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    Frame::NONE
+                        .fill(Color32::from_rgb(10, 16, 28))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("FIND:")
+                                        .size(11.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(0, 240, 255)),
+                                );
+
+                                let mut cur_query = find_query.clone();
+                                let te = ui.add(
+                                    egui::TextEdit::singleline(&mut cur_query)
+                                        .desired_width(140.0)
+                                        .hint_text("Find in page..."),
+                                );
+                                if te.changed() {
+                                    query_changed = Some(cur_query.clone());
+                                }
+
+                                if !cur_query.is_empty() {
+                                    let matches_count = raw_html
+                                        .to_lowercase()
+                                        .matches(&cur_query.to_lowercase())
+                                        .count();
+                                    let match_color = if matches_count > 0 {
+                                        Color32::from_rgb(0, 255, 157)
+                                    } else {
+                                        Color32::from_rgb(248, 113, 113)
+                                    };
+                                    ui.label(
+                                        RichText::new(format!("{} hits", matches_count))
+                                            .size(11.0)
+                                            .color(match_color),
+                                    );
+                                }
+
+                                if ui
+                                    .button(
+                                        RichText::new("x")
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(200, 215, 235)),
+                                    )
+                                    .on_hover_text("Close (Esc)")
+                                    .clicked()
+                                {
+                                    close_find = true;
+                                }
+                            });
+                        });
+                });
+
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_find = true;
+            }
+
+            if let Some(tab) = self.active_tab_mut() {
+                if let Some(new_q) = query_changed {
+                    tab.find_query = new_q;
+                }
+                if close_find {
+                    tab.show_find = false;
                 }
             }
         }

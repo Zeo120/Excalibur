@@ -11,5 +11,8 @@ pub use client::{ClientOptions, HttpClient};
 pub use error::{CoreError, Result};
 pub use network::{HttpHeaders, HttpRequest, HttpResponse};
 pub use session::SessionConfig;
-pub use storage::{AuditFindingRecord, WorkspaceStorage};
+pub use storage::{
+    AuditFindingRecord, BrowserBookmarkEntry, BrowserHistoryEntry, OmniboxMatch, OmniboxMatchType,
+    WorkspaceStorage,
+};
 pub use tls::{ensure_crypto_provider, Ja3Preset, PermissiveCertVerifier, TlsConfigBuilder};

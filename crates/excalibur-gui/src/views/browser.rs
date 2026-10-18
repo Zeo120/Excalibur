@@ -35,10 +35,32 @@ pub struct YouTubeWatchDetails {
 }
 
 /// Visual browser viewport rendering DOM nodes into interactive GUI elements.
-#[derive(Default)]
 pub struct BrowserRenderer {
     pub input_states: HashMap<String, String>,
     pub speed_dial_input: String,
+    pub history_search_query: String,
+    pub new_bookmark_url: String,
+    pub new_bookmark_title: String,
+    pub new_bookmark_folder: String,
+    pub clear_history_confirm: bool,
+    pub zoom: f32,
+    pub find_query: String,
+}
+
+impl Default for BrowserRenderer {
+    fn default() -> Self {
+        Self {
+            input_states: HashMap::new(),
+            speed_dial_input: String::new(),
+            history_search_query: String::new(),
+            new_bookmark_url: String::new(),
+            new_bookmark_title: String::new(),
+            new_bookmark_folder: "Favorites".to_string(),
+            clear_history_confirm: false,
+            zoom: 1.0,
+            find_query: String::new(),
+        }
+    }
 }
 
 impl BrowserRenderer {
@@ -47,6 +69,7 @@ impl BrowserRenderer {
     }
 
     /// Renders the current browser tab contents.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         ui: &mut Ui,
@@ -55,7 +78,13 @@ impl BrowserRenderer {
         raw_html: &str,
         is_loading: bool,
         error_msg: Option<&str>,
+        storage: &excalibur_core::WorkspaceStorage,
+        zoom: f32,
+        find_query: &str,
     ) -> Option<BrowserAction> {
+        self.zoom = if zoom < 0.5 { 1.0 } else { zoom };
+        self.find_query = find_query.to_string();
+
         let mut action = None;
 
         if is_loading {
@@ -65,6 +94,24 @@ impl BrowserRenderer {
 
         if let Some(err) = error_msg {
             self.render_error(ui, url, err, &mut action);
+            return action;
+        }
+
+        // Internal Browser Pages
+        if url == "excalibur://history" {
+            self.render_history_page(ui, storage, &mut action);
+            return action;
+        }
+        if url == "excalibur://bookmarks" {
+            self.render_bookmarks_page(ui, storage, &mut action);
+            return action;
+        }
+        if url == "excalibur://settings" {
+            self.render_settings_page(ui, storage, &mut action);
+            return action;
+        }
+        if url == "excalibur://about" {
+            self.render_about_page(ui, storage, &mut action);
             return action;
         }
 
@@ -94,7 +141,8 @@ impl BrowserRenderer {
                 .show(ui, |ui| {
                     ui.add_space(12.0);
                     let available_width = ui.available_width();
-                    let content_width = available_width.min(940.0);
+                    let content_width = (available_width.min(940.0) * self.zoom.clamp(0.6, 2.5))
+                        .min(available_width);
                     let side_margin = ((available_width - content_width) / 2.0).max(16.0);
 
                     ui.horizontal(|ui| {
@@ -300,6 +348,46 @@ impl BrowserRenderer {
                                             RichText::new(badge).size(11.0).strong().color(color),
                                         );
                                     });
+                            }
+                        });
+
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+                            let nav_links = [
+                                (
+                                    "History",
+                                    "excalibur://history",
+                                    Color32::from_rgb(56, 189, 248),
+                                ),
+                                (
+                                    "Bookmarks",
+                                    "excalibur://bookmarks",
+                                    Color32::from_rgb(0, 255, 157),
+                                ),
+                                (
+                                    "Settings",
+                                    "excalibur://settings",
+                                    Color32::from_rgb(250, 204, 21),
+                                ),
+                                (
+                                    "About",
+                                    "excalibur://about",
+                                    Color32::from_rgb(192, 132, 252),
+                                ),
+                            ];
+                            for (label, uri, col) in nav_links {
+                                if ui
+                                    .button(
+                                        RichText::new(format!("[ {} ]", label))
+                                            .size(11.5)
+                                            .strong()
+                                            .color(col),
+                                    )
+                                    .clicked()
+                                {
+                                    *action = Some(BrowserAction::Navigate(uri.to_string()));
+                                }
                             }
                         });
                     });
@@ -568,6 +656,826 @@ impl BrowserRenderer {
                 });
                 ui.add_space(side_margin);
             });
+        });
+    }
+
+    fn render_history_page(
+        &mut self,
+        ui: &mut Ui,
+        storage: &excalibur_core::WorkspaceStorage,
+        action: &mut Option<BrowserAction>,
+    ) {
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(20.0);
+            let available_width = ui.available_width();
+            let content_width = available_width.min(940.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+            ui.horizontal(|ui| {
+                ui.add_space(side_margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+
+                    // Header row
+                    ui.horizontal(|ui| {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(18, 38, 72))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(Margin::symmetric(10, 4))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("[ HISTORY ]")
+                                        .size(13.0)
+                                        .color(Color32::from_rgb(0, 240, 255))
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Browsing History & Audit Timeline")
+                                .size(22.0)
+                                .color(Color32::from_rgb(240, 246, 252))
+                                .strong(),
+                        );
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if self.clear_history_confirm {
+                                if ui
+                                    .button(
+                                        RichText::new("[Confirm Clear All]")
+                                            .color(Color32::from_rgb(255, 60, 90))
+                                            .strong(),
+                                    )
+                                    .clicked()
+                                {
+                                    let _ = storage.clear_browser_history();
+                                    self.clear_history_confirm = false;
+                                }
+                                if ui.small_button("Cancel").clicked() {
+                                    self.clear_history_confirm = false;
+                                }
+                            } else if ui
+                                .button(
+                                    RichText::new("Clear History")
+                                        .color(Color32::from_rgb(248, 113, 113)),
+                                )
+                                .clicked()
+                            {
+                                self.clear_history_confirm = true;
+                            }
+                        });
+                    });
+
+                    ui.add_space(14.0);
+
+                    // Search filter box
+                    Frame::NONE
+                        .fill(Color32::from_rgb(6, 10, 18))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(31, 80, 160)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::symmetric(12, 8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Filter:")
+                                        .color(Color32::from_rgb(56, 189, 248))
+                                        .strong(),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.history_search_query)
+                                        .hint_text("Search visited URLs or page titles...")
+                                        .desired_width(ui.available_width() - 80.0),
+                                );
+                                if !self.history_search_query.is_empty()
+                                    && ui.small_button("Clear").clicked()
+                                {
+                                    self.history_search_query.clear();
+                                }
+                            });
+                        });
+
+                    ui.add_space(16.0);
+
+                    let filter_opt = if self.history_search_query.trim().is_empty() {
+                        None
+                    } else {
+                        Some(self.history_search_query.as_str())
+                    };
+
+                    let history_entries = storage
+                        .list_browser_history(100, 0, filter_opt)
+                        .unwrap_or_default();
+
+                    if history_entries.is_empty() {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(10, 15, 26))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .inner_margin(Margin::symmetric(24, 20))
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("No browsing history found.")
+                                            .size(15.0)
+                                            .color(Color32::from_rgb(148, 163, 184)),
+                                    );
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(
+                                            "Visited pages will automatically be indexed here.",
+                                        )
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(100, 116, 139)),
+                                    );
+                                });
+                            });
+                    } else {
+                        let mut delete_id = None;
+                        for entry in &history_entries {
+                            Frame::NONE
+                                .fill(Color32::from_rgb(8, 13, 24))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(Margin::symmetric(14, 10))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let tag = if entry.url.contains("owasp") {
+                                            "SEC"
+                                        } else if entry.url.contains("github") {
+                                            "GIT"
+                                        } else if entry.url.contains("youtube") {
+                                            "YT"
+                                        } else {
+                                            "WEB"
+                                        };
+
+                                        ui.label(
+                                            RichText::new(format!("[{}]", tag))
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(56, 189, 248))
+                                                .strong(),
+                                        );
+
+                                        ui.vertical(|ui| {
+                                            let title_btn = ui.link(
+                                                RichText::new(&entry.title)
+                                                    .size(14.0)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(240, 246, 252)),
+                                            );
+                                            if title_btn.clicked() {
+                                                *action = Some(BrowserAction::Navigate(
+                                                    entry.url.clone(),
+                                                ));
+                                            }
+
+                                            ui.label(
+                                                RichText::new(&entry.url)
+                                                    .size(11.5)
+                                                    .color(Color32::from_rgb(125, 211, 252)),
+                                            );
+                                        });
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.small_button("x").clicked() {
+                                                    delete_id = Some(entry.id);
+                                                }
+
+                                                if entry.visit_count > 1 {
+                                                    Frame::NONE
+                                                        .fill(Color32::from_rgb(15, 23, 42))
+                                                        .stroke(Stroke::new(
+                                                            1.0_f32,
+                                                            Color32::from_rgb(51, 65, 85),
+                                                        ))
+                                                        .corner_radius(egui::CornerRadius::same(4))
+                                                        .inner_margin(Margin::symmetric(6, 2))
+                                                        .show(ui, |ui| {
+                                                            ui.label(
+                                                                RichText::new(format!(
+                                                                    "{} visits",
+                                                                    entry.visit_count
+                                                                ))
+                                                                .size(10.5)
+                                                                .color(Color32::from_rgb(
+                                                                    148, 163, 184,
+                                                                )),
+                                                            );
+                                                        });
+                                                }
+
+                                                let time_str =
+                                                    format_unix_timestamp(entry.visit_time);
+                                                ui.label(
+                                                    RichText::new(time_str)
+                                                        .size(11.0)
+                                                        .color(Color32::from_rgb(100, 116, 139)),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
+                            ui.add_space(4.0);
+                        }
+
+                        if let Some(id) = delete_id {
+                            let _ = storage.delete_browser_history_entry(id);
+                        }
+                    }
+                });
+                ui.add_space(side_margin);
+            });
+            ui.add_space(32.0);
+        });
+    }
+
+    fn render_bookmarks_page(
+        &mut self,
+        ui: &mut Ui,
+        storage: &excalibur_core::WorkspaceStorage,
+        action: &mut Option<BrowserAction>,
+    ) {
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(20.0);
+            let available_width = ui.available_width();
+            let content_width = available_width.min(940.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+            ui.horizontal(|ui| {
+                ui.add_space(side_margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+
+                    ui.horizontal(|ui| {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(18, 38, 72))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(Margin::symmetric(10, 4))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("[ BOOKMARKS ]")
+                                        .size(13.0)
+                                        .color(Color32::from_rgb(0, 240, 255))
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Favorites & Quick Access Targets")
+                                .size(22.0)
+                                .color(Color32::from_rgb(240, 246, 252))
+                                .strong(),
+                        );
+                    });
+
+                    ui.add_space(16.0);
+
+                    // Add Bookmark inline card
+                    Frame::NONE
+                        .fill(Color32::from_rgb(10, 16, 28))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(31, 111, 235)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::symmetric(16, 12))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Add New Bookmark")
+                                    .size(13.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(56, 189, 248)),
+                            );
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                ui.label("Title:");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_bookmark_title)
+                                        .hint_text("Page Name")
+                                        .desired_width(180.0),
+                                );
+
+                                ui.label("URL:");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_bookmark_url)
+                                        .hint_text("https://example.com")
+                                        .desired_width(260.0),
+                                );
+
+                                ui.label("Folder:");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_bookmark_folder)
+                                        .hint_text("Favorites")
+                                        .desired_width(120.0),
+                                );
+
+                                if ui
+                                    .button(RichText::new("+ Save").strong().color(Color32::WHITE))
+                                    .clicked()
+                                {
+                                    let url = self.new_bookmark_url.trim();
+                                    if !url.is_empty() {
+                                        let title = if self.new_bookmark_title.trim().is_empty() {
+                                            url
+                                        } else {
+                                            self.new_bookmark_title.trim()
+                                        };
+                                        let folder = if self.new_bookmark_folder.trim().is_empty() {
+                                            "Favorites"
+                                        } else {
+                                            self.new_bookmark_folder.trim()
+                                        };
+                                        let _ = storage.add_browser_bookmark(url, title, folder);
+                                        self.new_bookmark_url.clear();
+                                        self.new_bookmark_title.clear();
+                                    }
+                                }
+                            });
+                        });
+
+                    ui.add_space(16.0);
+
+                    // List bookmarks
+                    let bookmarks = storage.list_browser_bookmarks().unwrap_or_default();
+                    let mut remove_url = None;
+
+                    for bm in &bookmarks {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(8, 13, 24))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    Frame::NONE
+                                        .fill(Color32::from_rgb(18, 38, 72))
+                                        .corner_radius(egui::CornerRadius::same(4))
+                                        .inner_margin(Margin::symmetric(6, 2))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(&bm.folder)
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(56, 189, 248))
+                                                    .strong(),
+                                            );
+                                        });
+
+                                    ui.vertical(|ui| {
+                                        let title_btn = ui.link(
+                                            RichText::new(&bm.title)
+                                                .size(14.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(240, 246, 252)),
+                                        );
+                                        if title_btn.clicked() {
+                                            *action = Some(BrowserAction::Navigate(bm.url.clone()));
+                                        }
+
+                                        ui.label(
+                                            RichText::new(&bm.url)
+                                                .size(11.5)
+                                                .color(Color32::from_rgb(125, 211, 252)),
+                                        );
+                                    });
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button("Delete").clicked() {
+                                                remove_url = Some(bm.url.clone());
+                                            }
+
+                                            if ui.small_button("Copy").clicked() {
+                                                ui.ctx().copy_text(bm.url.clone());
+                                            }
+                                        },
+                                    );
+                                });
+                            });
+                        ui.add_space(4.0);
+                    }
+
+                    if let Some(url) = remove_url {
+                        let _ = storage.remove_browser_bookmark(&url);
+                    }
+                });
+                ui.add_space(side_margin);
+            });
+            ui.add_space(32.0);
+        });
+    }
+
+    fn render_settings_page(
+        &mut self,
+        ui: &mut Ui,
+        storage: &excalibur_core::WorkspaceStorage,
+        _action: &mut Option<BrowserAction>,
+    ) {
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(20.0);
+            let available_width = ui.available_width();
+            let content_width = available_width.min(940.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+            ui.horizontal(|ui| {
+                ui.add_space(side_margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+
+                    ui.horizontal(|ui| {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(18, 38, 72))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(Margin::symmetric(10, 4))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("[ SETTINGS ]")
+                                        .size(13.0)
+                                        .color(Color32::from_rgb(0, 240, 255))
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Browser Configuration & Security Controls")
+                                .size(22.0)
+                                .color(Color32::from_rgb(240, 246, 252))
+                                .strong(),
+                        );
+                    });
+
+                    ui.add_space(20.0);
+
+                    // 1. Search Engine Preference
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Default Search Engine")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Select the primary query provider used when entering non-URL terms in the omnibox.",
+                                )
+                                .size(12.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                            ui.add_space(10.0);
+
+                            let current_engine = storage
+                                .get_browser_setting("search_engine")
+                                .unwrap_or_default()
+                                .unwrap_or_else(|| "DuckDuckGo".to_string());
+
+                            let engines = ["DuckDuckGo", "Google", "SearXNG", "Brave", "YouTube"];
+                            ui.horizontal_wrapped(|ui| {
+                                for eng in engines {
+                                    let is_active = current_engine == eng;
+                                    if ui
+                                        .selectable_label(is_active, RichText::new(eng).strong())
+                                        .clicked()
+                                    {
+                                        let _ = storage.set_browser_setting("search_engine", eng);
+                                    }
+                                }
+                            });
+                        });
+
+                    ui.add_space(14.0);
+
+                    // 2. User-Agent Identity & Stealth Header
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("User-Agent Header & Browser Identity")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Configure client header identification sent during HTTP/1.1 and HTTP/2 handshakes.",
+                                )
+                                .size(12.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                            ui.add_space(10.0);
+
+                            let current_ua = storage
+                                .get_browser_setting("user_agent_preset")
+                                .unwrap_or_default()
+                                .unwrap_or_else(|| "Excalibur".to_string());
+
+                            let presets = [
+                                ("Excalibur", "Excalibur/1.0 (Security Engine; Non-Chromium)"),
+                                ("Chrome", "Chrome 134 on Windows 11 (Blink Spoof)"),
+                                ("Firefox", "Firefox 136 on Linux (Gecko Spoof)"),
+                                ("Safari", "Safari 18 on macOS (WebKit Spoof)"),
+                                ("Curl", "curl/8.8.0 (Security Scanner Emulation)"),
+                            ];
+
+                            for (key, label) in presets {
+                                let is_active = current_ua == key;
+                                if ui
+                                    .selectable_label(is_active, RichText::new(label))
+                                    .clicked()
+                                {
+                                    let _ = storage.set_browser_setting("user_agent_preset", key);
+                                }
+                            }
+                        });
+
+                    ui.add_space(14.0);
+
+                    // 3. Tab Layout Mode
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Tab Strip Layout")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Choose between standard horizontal top tabs or the modern vertical Zen/Arc sidebar.",
+                                )
+                                .size(12.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                            ui.add_space(10.0);
+
+                            let current_layout = storage
+                                .get_browser_setting("tab_layout")
+                                .unwrap_or_default()
+                                .unwrap_or_else(|| "top".to_string());
+
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(
+                                        current_layout == "top",
+                                        "Top Tab Strip (Standard)",
+                                    )
+                                    .clicked()
+                                {
+                                    let _ = storage.set_browser_setting("tab_layout", "top");
+                                }
+                                if ui
+                                    .selectable_label(
+                                        current_layout == "sidebar",
+                                        "Zen Vertical Sidebar (Arc Mode)",
+                                    )
+                                    .clicked()
+                                {
+                                    let _ = storage.set_browser_setting("tab_layout", "sidebar");
+                                }
+                            });
+                        });
+
+                    ui.add_space(14.0);
+
+                    // 4. Default Content Zoom
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Default Page Zoom")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Adjust default content rendering scale factor across tabs (fine-tune per tab with Ctrl++ and Ctrl+-).",
+                                )
+                                .size(12.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                            ui.add_space(10.0);
+
+                            let zoom_str = storage
+                                .get_browser_setting("default_zoom")
+                                .unwrap_or_default()
+                                .unwrap_or_else(|| "100%".to_string());
+
+                            let zoom_levels = ["80%", "90%", "100%", "110%", "125%", "150%"];
+                            ui.horizontal(|ui| {
+                                for z in zoom_levels {
+                                    let is_active = zoom_str == z;
+                                    if ui.selectable_label(is_active, z).clicked() {
+                                        let _ = storage.set_browser_setting("default_zoom", z);
+                                    }
+                                }
+                            });
+                        });
+                });
+                ui.add_space(side_margin);
+            });
+            ui.add_space(32.0);
+        });
+    }
+
+    fn render_about_page(
+        &mut self,
+        ui: &mut Ui,
+        storage: &excalibur_core::WorkspaceStorage,
+        _action: &mut Option<BrowserAction>,
+    ) {
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(20.0);
+            let available_width = ui.available_width();
+            let content_width = available_width.min(940.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+            ui.horizontal(|ui| {
+                ui.add_space(side_margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("EXCALIBUR")
+                                .size(36.0)
+                                .strong()
+                                .color(Color32::from_rgb(56, 189, 248)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Version 0.1.0 (Cyber Modern Edition)")
+                                .size(14.0)
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Independent Security Browser & Penetration Testing Workbench",
+                            )
+                            .size(13.0)
+                            .color(Color32::from_rgb(148, 163, 184)),
+                        );
+                    });
+
+                    ui.add_space(24.0);
+
+                    // Core Pillars Card
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Engine Architecture & Guarantees")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(8.0);
+
+                            let pillars = [
+                                (
+                                    "[ NON-CHROMIUM ]",
+                                    "Zero dependencies on Google Chromium, CEF, WebKit, or Blink runtimes.",
+                                    Color32::from_rgb(0, 240, 255),
+                                ),
+                                (
+                                    "[ PURE RUST DOM ]",
+                                    "Custom semantic DOM parser and CSS style cascade resolver in safe Rust.",
+                                    Color32::from_rgb(0, 255, 157),
+                                ),
+                                (
+                                    "[ GPU HARDWARE ]",
+                                    "Direct hardware-accelerated rendering using egui 0.31 over wgpu/glow.",
+                                    Color32::from_rgb(250, 204, 21),
+                                ),
+                                (
+                                    "[ SECURITY RADAR ]",
+                                    "Embedded QuickJS client sink interception and RFC security header auditing.",
+                                    Color32::from_rgb(255, 60, 90),
+                                ),
+                                (
+                                    "[ MITM PROXY ]",
+                                    "Integrated local proxy daemon on 127.0.0.1:8080 with on-the-fly CA generation.",
+                                    Color32::from_rgb(192, 132, 252),
+                                ),
+                            ];
+
+                            for (badge, desc, color) in pillars {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(badge).size(11.0).strong().color(color),
+                                    );
+                                    ui.label(
+                                        RichText::new(desc)
+                                            .size(12.0)
+                                            .color(Color32::from_rgb(203, 213, 225)),
+                                    );
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+
+                    ui.add_space(16.0);
+
+                    // Live Diagnostics Card
+                    Frame::NONE
+                        .fill(Color32::from_rgb(8, 13, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("System Telemetry")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 246, 252)),
+                            );
+                            ui.add_space(8.0);
+
+                            let history_count = storage
+                                .list_browser_history(1, 0, None)
+                                .map(|h| h.len())
+                                .unwrap_or(0);
+                            let bookmark_count = storage
+                                .list_browser_bookmarks()
+                                .map(|b| b.len())
+                                .unwrap_or(0);
+
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Database Storage:")
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                                ui.label(
+                                    RichText::new("SQLite 3 with WAL & FTS5 (High-Performance)")
+                                        .color(Color32::from_rgb(56, 189, 248)),
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Saved Bookmarks:")
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{} entries", bookmark_count))
+                                        .color(Color32::from_rgb(0, 255, 157)),
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Recent History Log:")
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{} items loaded", history_count))
+                                        .color(Color32::from_rgb(250, 204, 21)),
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Repository:")
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                                ui.label(
+                                    RichText::new("https://github.com/Zeo120/Excalibur")
+                                        .color(Color32::from_rgb(125, 211, 252)),
+                                );
+                            });
+                        });
+                });
+                ui.add_space(side_margin);
+            });
+            ui.add_space(32.0);
         });
     }
 
@@ -1120,7 +2028,28 @@ impl BrowserRenderer {
             NodeType::Text(text) => {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    ui.label(trimmed);
+                    let font_size = 13.0 * self.zoom.clamp(0.6, 2.5);
+                    if !self.find_query.trim().is_empty()
+                        && trimmed
+                            .to_lowercase()
+                            .contains(&self.find_query.trim().to_lowercase())
+                    {
+                        Frame::NONE
+                            .fill(Color32::from_rgb(250, 204, 21))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(254, 240, 138)))
+                            .corner_radius(egui::CornerRadius::same(3))
+                            .inner_margin(Margin::symmetric(4, 1))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(trimmed)
+                                        .size(font_size)
+                                        .color(Color32::from_rgb(10, 15, 26))
+                                        .strong(),
+                                );
+                            });
+                    } else {
+                        ui.label(RichText::new(trimmed).size(font_size));
+                    }
                 }
             }
             NodeType::Comment(_) => {}
@@ -1875,4 +2804,12 @@ fn find_video_details_in_json(val: &serde_json::Value) -> Option<YouTubeWatchDet
         _ => {}
     }
     None
+}
+
+fn format_unix_timestamp(ts: i64) -> String {
+    if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+    } else {
+        ts.to_string()
+    }
 }
