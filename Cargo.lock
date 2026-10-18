@@ -1144,6 +1144,7 @@ name = "excalibur-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "eframe",
  "egui",
  "egui_extras",
@@ -1194,6 +1195,7 @@ name = "excalibur-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crossterm",
  "excalibur-audit",
  "excalibur-core",
