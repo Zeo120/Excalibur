@@ -11,6 +11,7 @@ pub enum BrowserAction {
 #[derive(Default)]
 pub struct BrowserRenderer {
     pub input_states: HashMap<String, String>,
+    pub speed_dial_input: String,
 }
 
 impl BrowserRenderer {
@@ -105,6 +106,7 @@ impl BrowserRenderer {
                 .fill(Color32::from_rgb(22, 27, 34))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
                 .inner_margin(Margin::same(12))
+                .corner_radius(egui::CornerRadius::same(6))
                 .show(ui, |ui| {
                     ui.label(RichText::new(err).color(Color32::from_rgb(248, 81, 73)));
                 });
@@ -116,93 +118,307 @@ impl BrowserRenderer {
         });
     }
 
-    fn render_speed_dial(&self, ui: &mut Ui, action: &mut Option<BrowserAction>) {
+    fn render_speed_dial(&mut self, ui: &mut Ui, action: &mut Option<BrowserAction>) {
         ScrollArea::vertical().show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.label(
-                    RichText::new("Excalibur Browser")
-                        .size(32.0)
-                        .strong()
-                        .color(Color32::from_rgb(88, 166, 255)),
-                );
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Independent non-Chromium architecture with built-in penetration testing & telemetry")
-                        .size(14.0)
-                        .color(Color32::from_rgb(139, 148, 158)),
-                );
-                ui.add_space(32.0);
+            ui.add_space(24.0);
+            let available_width = ui.available_width();
+            let content_width = available_width.min(920.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
 
-                ui.heading("Quick Access Targets");
-                ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add_space(side_margin);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
 
-                let shortcuts = [
-                    (
-                        "Example Domain",
-                        "https://example.com",
-                        "Clean standard IANA reference page",
-                    ),
-                    (
-                        "Hacker News",
-                        "https://news.ycombinator.com",
-                        "Tech news aggregator with dense HTML tables",
-                    ),
-                    (
-                        "OWASP Foundation",
-                        "https://owasp.org",
-                        "Worldwide non-profit dedicated to web application security",
-                    ),
-                    (
-                        "HTTPBin HTML Sandbox",
-                        "https://httpbin.org/html",
-                        "Test HTML document with moby-dick passage",
-                    ),
-                    (
-                        "GitHub",
-                        "https://github.com",
-                        "Developer platform and code hosting",
-                    ),
-                ];
+                    // 1. Hero Branding & Engine Badges
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("EXCALIBUR")
+                                .size(36.0)
+                                .strong()
+                                .color(Color32::from_rgb(88, 166, 255)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Independent Security Browser & Penetration Testing Workbench",
+                            )
+                            .size(14.0)
+                            .color(Color32::from_rgb(139, 148, 158)),
+                        );
+                        ui.add_space(12.0);
 
-                for (name, url, desc) in shortcuts {
-                    let frame = Frame::NONE
-                        .fill(Color32::from_rgb(22, 27, 34))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
-                        .inner_margin(Margin::same(12));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                            let badges = [
+                                ("[ NON-CHROMIUM ]", Color32::from_rgb(88, 166, 255)),
+                                ("[ PURE-RUST DOM ]", Color32::from_rgb(63, 185, 80)),
+                                ("[ ZERO VENDOR BLINK ]", Color32::from_rgb(210, 153, 34)),
+                                (
+                                    "[ MITM PROXY 127.0.0.1:8080 ]",
+                                    Color32::from_rgb(248, 81, 73),
+                                ),
+                            ];
 
-                    frame.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(name)
-                                        .size(16.0)
-                                        .strong()
-                                        .color(Color32::WHITE),
-                                );
-                                ui.label(
-                                    RichText::new(desc)
-                                        .size(12.0)
-                                        .color(Color32::from_rgb(139, 148, 158)),
-                                );
-                                ui.label(
-                                    RichText::new(url)
-                                        .size(12.0)
-                                        .color(Color32::from_rgb(88, 166, 255)),
-                                );
-                            });
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.button("Open Target").clicked() {
-                                        *action = Some(BrowserAction::Navigate(url.to_string()));
-                                    }
-                                },
-                            );
+                            for (badge, color) in badges {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(22, 27, 34))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                    .corner_radius(egui::CornerRadius::same(6))
+                                    .inner_margin(Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(badge).size(11.0).strong().color(color),
+                                        );
+                                    });
+                            }
                         });
                     });
-                    ui.add_space(8.0);
-                }
+
+                    ui.add_space(20.0);
+
+                    // 2. Central Quick Launch Search Bar
+                    Frame::NONE
+                        .fill(Color32::from_rgb(18, 22, 28))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                        .corner_radius(egui::CornerRadius::same(10))
+                        .inner_margin(Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("URI / Search:")
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(88, 166, 255))
+                                        .strong(),
+                                );
+
+                                let te = ui.add(
+                                    egui::TextEdit::singleline(&mut self.speed_dial_input)
+                                        .hint_text(
+                                            "Enter URL (e.g. https://owasp.org) or search query...",
+                                        )
+                                        .desired_width(ui.available_width() - 140.0),
+                                );
+
+                                let should_submit = (te.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                                    || ui
+                                        .button(
+                                            RichText::new("Launch Target")
+                                                .strong()
+                                                .color(Color32::WHITE),
+                                        )
+                                        .clicked();
+
+                                if should_submit {
+                                    let raw = self.speed_dial_input.trim();
+                                    if !raw.is_empty() {
+                                        let target = if raw.starts_with("http://")
+                                            || raw.starts_with("https://")
+                                        {
+                                            raw.to_string()
+                                        } else if raw.contains('.') && !raw.contains(' ') {
+                                            format!("https://{}", raw)
+                                        } else {
+                                            format!(
+                                                "https://html.duckduckgo.com/html/?q={}",
+                                                raw.replace(' ', "+")
+                                            )
+                                        };
+                                        *action = Some(BrowserAction::Navigate(target));
+                                    }
+                                }
+                            });
+                        });
+
+                    ui.add_space(24.0);
+
+                    // 3. Categorized Speed Dial Targets
+                    let categories = [
+                        (
+                            "Security Testing & Labs",
+                            Color32::from_rgb(248, 81, 73),
+                            vec![
+                                (
+                                    "OWASP Foundation",
+                                    "https://owasp.org",
+                                    "Web application security standards and top 10",
+                                ),
+                                (
+                                    "PortSwigger Academy",
+                                    "https://portswigger.net/web-security",
+                                    "Interactive vulnerability training labs",
+                                ),
+                                (
+                                    "HackerOne Directory",
+                                    "https://hackerone.com",
+                                    "Vulnerability coordination & bug bounty directory",
+                                ),
+                                (
+                                    "CVE Details",
+                                    "https://cvedetails.com",
+                                    "Security vulnerability database and exploit tracking",
+                                ),
+                            ],
+                        ),
+                        (
+                            "Developer & Research Standards",
+                            Color32::from_rgb(88, 166, 255),
+                            vec![
+                                (
+                                    "GitHub",
+                                    "https://github.com",
+                                    "Code hosting, repositories & security advisories",
+                                ),
+                                (
+                                    "Hacker News",
+                                    "https://news.ycombinator.com",
+                                    "Technology news aggregator with dense HTML tables",
+                                ),
+                                (
+                                    "Example Domain",
+                                    "https://example.com",
+                                    "Official RFC 2606 reference standard domain",
+                                ),
+                                (
+                                    "MDN Web Docs",
+                                    "https://developer.mozilla.org",
+                                    "Web platform documentation & HTML5/JS APIs",
+                                ),
+                            ],
+                        ),
+                        (
+                            "Diagnostics & Local Sandboxes",
+                            Color32::from_rgb(63, 185, 80),
+                            vec![
+                                (
+                                    "Cloudflare Trace",
+                                    "https://cloudflare.com/cdn-cgi/trace",
+                                    "Edge CDN routing, TLS SNI, and IP diagnostics",
+                                ),
+                                (
+                                    "HTTPBin HTML Sandbox",
+                                    "https://httpbin.org/html",
+                                    "HTTP request/response test suite with HTML sample",
+                                ),
+                                (
+                                    "Local MITM Proxy",
+                                    "http://127.0.0.1:8080",
+                                    "Excalibur proxy listener and CA inspection",
+                                ),
+                            ],
+                        ),
+                    ];
+
+                    for (cat_name, cat_color, targets) in categories {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("[ {} ]", cat_name))
+                                    .size(13.0)
+                                    .strong()
+                                    .color(cat_color),
+                            );
+                        });
+                        ui.add_space(6.0);
+
+                        for (name, url, desc) in targets {
+                            Frame::NONE
+                                .fill(Color32::from_rgb(22, 27, 34))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                .corner_radius(egui::CornerRadius::same(8))
+                                .inner_margin(Margin::symmetric(14, 10))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new(name)
+                                                    .size(15.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            );
+                                            ui.label(
+                                                RichText::new(desc)
+                                                    .size(12.0)
+                                                    .color(Color32::from_rgb(139, 148, 158)),
+                                            );
+                                            ui.label(
+                                                RichText::new(url)
+                                                    .size(12.0)
+                                                    .color(Color32::from_rgb(88, 166, 255)),
+                                            );
+                                        });
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.button("Launch").clicked() {
+                                                    *action = Some(BrowserAction::Navigate(
+                                                        url.to_string(),
+                                                    ));
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                            ui.add_space(6.0);
+                        }
+
+                        ui.add_space(14.0);
+                    }
+
+                    // 4. Engine Diagnostics Dashboard
+                    Frame::NONE
+                        .fill(Color32::from_rgb(16, 20, 26))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("ENGINE TELEMETRY")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(88, 166, 255)),
+                                    );
+                                    ui.label("Hyper + Rustls 0.23 (TLS 1.3)");
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("MITM PROXY")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(63, 185, 80)),
+                                    );
+                                    ui.label("127.0.0.1:8080 (Listening)");
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("DOM PARSER")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(210, 153, 34)),
+                                    );
+                                    ui.label("Pure-Rust Semantic AST");
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("SECURITY AUDIT")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(248, 81, 73)),
+                                    );
+                                    ui.label("QuickJS Sinks + Passive Radar");
+                                });
+                            });
+                        });
+
+                    ui.add_space(32.0);
+                });
+                ui.add_space(side_margin);
             });
         });
     }

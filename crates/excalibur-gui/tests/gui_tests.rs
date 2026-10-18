@@ -1,5 +1,5 @@
 use eframe::egui;
-use excalibur_gui::app::{BrowserTab, GuiApp, XModeLayout, XModeTab};
+use excalibur_gui::app::{BrowserTab, GuiApp, TabNavLayout, XModeLayout, XModeTab};
 use std::sync::mpsc::channel;
 
 fn create_test_app() -> GuiApp {
@@ -10,6 +10,8 @@ fn create_test_app() -> GuiApp {
         next_tab_id: 2,
         omnibox_input: "https://example.com".to_string(),
         browser_renderer: Default::default(),
+        tab_nav_layout: TabNavLayout::Top,
+        show_favorites_bar: true,
         x_mode_enabled: false,
         x_mode_tab: XModeTab::Interceptor,
         x_mode_layout: XModeLayout::SplitDrawer,
@@ -28,8 +30,9 @@ fn test_modern_browser_rendering_and_tabs() {
     let ctx = egui::Context::default();
     let mut app = create_test_app();
 
-    // 1. Render Modern Browser Mode (X-Mode OFF)
+    // 1. Render Modern Browser Mode (X-Mode OFF, Horizontal tabs)
     assert!(!app.x_mode_enabled);
+    assert_eq!(app.tab_nav_layout, TabNavLayout::Top);
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
@@ -40,6 +43,13 @@ fn test_modern_browser_rendering_and_tabs() {
     assert_eq!(app.tabs.len(), 2);
     assert_eq!(app.active_tab().unwrap().url, "https://owasp.org");
 
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    // 3. Toggle to Zen / Arc Vertical Sidebar Mode
+    app.tab_nav_layout = TabNavLayout::Sidebar;
+    assert_eq!(app.tab_nav_layout, TabNavLayout::Sidebar);
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
