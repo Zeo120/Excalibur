@@ -54,7 +54,13 @@ fn test_x_mode_toggle_and_tools_workbench() {
     app.x_mode_enabled = true;
     assert!(app.x_mode_enabled);
 
-    // 1. Interceptor Tool
+    // 1. Dev Web View Tool
+    app.x_mode_tab = XModeTab::DevWebView;
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        app.render_panels(ctx);
+    });
+
+    // 2. Interceptor Tool
     app.x_mode_tab = XModeTab::Interceptor;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);

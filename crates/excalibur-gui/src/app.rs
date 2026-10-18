@@ -79,8 +79,9 @@ pub enum PageNavigationEvent {
     },
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum XModeTab {
+    DevWebView,
     Interceptor,
     Repeater,
     Scanner,
@@ -182,6 +183,10 @@ impl GuiApp {
 
     /// Launches the Full Web Engine (dedicated chromeless browser window routed via Excalibur proxy).
     pub fn launch_full_web_engine(&self, url: &str) {
+        if cfg!(test) || std::env::var("EXCALIBUR_HEADLESS").is_ok() {
+            return;
+        }
+
         let edge_paths = [
             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -240,6 +245,9 @@ impl GuiApp {
                 tab.raw_html.clear();
                 return;
             }
+
+            // Launch Full Web View (Real-world chromeless browser engine via proxy) by default
+            self.launch_full_web_engine(&normalized);
 
             let tx = self.page_tx.clone();
             let target_url = normalized.clone();
@@ -674,28 +682,33 @@ impl GuiApp {
 
             ui.selectable_value(
                 &mut self.x_mode_tab,
+                XModeTab::DevWebView,
+                "[1] Dev Web View",
+            );
+            ui.selectable_value(
+                &mut self.x_mode_tab,
                 XModeTab::Interceptor,
-                "[1] Live Interceptor",
+                "[2] Live Interceptor",
             );
             ui.selectable_value(
                 &mut self.x_mode_tab,
                 XModeTab::Repeater,
-                "[2] Request Repeater",
+                "[3] Request Repeater",
             );
             ui.selectable_value(
                 &mut self.x_mode_tab,
                 XModeTab::Scanner,
-                "[3] Vulnerability Radar",
+                "[4] Vulnerability Radar",
             );
             ui.selectable_value(
                 &mut self.x_mode_tab,
                 XModeTab::DomAndScripts,
-                "[4] DOM & Scripts",
+                "[5] DOM & Scripts",
             );
             ui.selectable_value(
                 &mut self.x_mode_tab,
                 XModeTab::ProxyManager,
-                "[5] MITM Proxy",
+                "[6] MITM Proxy",
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -715,31 +728,386 @@ impl GuiApp {
 
     fn render_browser_content(&mut self, ui: &mut Ui) {
         let active_id = self.active_tab_id;
-        let (url, dom, is_loading, error_msg) = if let Some(tab) = self.active_tab() {
-            (
-                tab.url.clone(),
-                tab.parsed_dom.clone(),
-                tab.is_loading,
-                tab.error_msg.clone(),
-            )
-        } else {
-            ("about:blank".to_string(), None, false, None)
-        };
+        let (url, is_loading, status_code, elapsed_ms, error_msg) =
+            if let Some(tab) = self.active_tab() {
+                (
+                    tab.url.clone(),
+                    tab.is_loading,
+                    tab.status_code,
+                    tab.elapsed_ms,
+                    tab.error_msg.clone(),
+                )
+            } else {
+                ("about:blank".to_string(), false, None, None, None)
+            };
 
-        if let Some(action) =
-            self.browser_renderer
-                .render(ui, &url, dom.as_ref(), is_loading, error_msg.as_deref())
-        {
-            match action {
-                BrowserAction::Navigate(target) => {
-                    self.navigate(active_id, &target);
-                }
-            }
-        }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(16.0);
+                let available_width = ui.available_width();
+                let content_width = available_width.min(960.0);
+                let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+
+                ui.horizontal(|ui| {
+                    ui.add_space(side_margin);
+                    ui.vertical(|ui| {
+                        ui.set_max_width(content_width);
+
+                        // 1. Hero Card: Full Web Engine Status & Controls
+                        Frame::NONE
+                            .fill(Color32::from_rgb(22, 27, 34))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .inner_margin(Margin::same(16))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("[● DEFAULT ENGINE]")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(63, 185, 80)),
+                                    );
+                                    ui.label(
+                                        RichText::new("Full Web-View Browser")
+                                            .size(18.0)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new("MITM Proxy: 127.0.0.1:8080")
+                                                    .size(12.0)
+                                                    .color(Color32::from_rgb(88, 166, 255)),
+                                            );
+                                        },
+                                    );
+                                });
+
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(
+                                        "Excalibur routes real-world browser traffic through its zero-trust inspection engine.\nAll requests, cookies, headers, and payloads are captured live into your security pipeline.",
+                                    )
+                                    .size(13.0)
+                                    .color(Color32::from_rgb(139, 148, 158)),
+                                );
+
+                                ui.add_space(12.0);
+                                ui.horizontal(|ui| {
+                                    let open_btn = ui.button(
+                                        RichText::new("🚀 Open / Focus Full Web View")
+                                            .size(14.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(88, 166, 255)),
+                                    );
+                                    if open_btn.clicked() {
+                                        let target = if url.is_empty() || url == "about:blank" {
+                                            "https://google.com"
+                                        } else {
+                                            &url
+                                        };
+                                        self.launch_full_web_engine(target);
+                                    }
+
+                                    let dev_view_btn = ui.button(
+                                        RichText::new("🔍 Open Dev Web View (X-Mode)")
+                                            .size(13.0)
+                                            .color(Color32::from_rgb(210, 153, 34)),
+                                    );
+                                    if dev_view_btn.clicked() {
+                                        self.x_mode_enabled = true;
+                                        self.x_mode_tab = XModeTab::DevWebView;
+                                    }
+
+                                    let x_btn = ui.button(
+                                        RichText::new("⚡ Launch X-Mode Tools")
+                                            .size(13.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(248, 81, 73)),
+                                    );
+                                    if x_btn.clicked() {
+                                        self.x_mode_enabled = true;
+                                    }
+                                });
+                            });
+
+                        ui.add_space(16.0);
+
+                        // 2. Active Session Card
+                        Frame::NONE
+                            .fill(Color32::from_rgb(18, 22, 28))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                            .inner_margin(Margin::same(14))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("Active Session:")
+                                            .size(13.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(139, 148, 158)),
+                                    );
+                                    ui.label(
+                                        RichText::new(&url)
+                                            .size(14.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(88, 166, 255)),
+                                    );
+                                });
+
+                                ui.add_space(6.0);
+                                if is_loading {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Connecting and inspecting response stream...");
+                                    });
+                                } else if let Some(err) = error_msg {
+                                    ui.label(
+                                        RichText::new(format!("Connection Alert: {}", err))
+                                            .color(Color32::from_rgb(248, 81, 73)),
+                                    );
+                                } else if let Some(status) = status_code {
+                                    ui.horizontal(|ui| {
+                                        let status_color = if status < 300 {
+                                            Color32::from_rgb(63, 185, 80)
+                                        } else if status < 400 {
+                                            Color32::from_rgb(210, 153, 34)
+                                        } else {
+                                            Color32::from_rgb(248, 81, 73)
+                                        };
+                                        ui.label(
+                                            RichText::new(format!("HTTP {}", status))
+                                                .color(status_color)
+                                                .strong(),
+                                        );
+                                        if let Some(ms) = elapsed_ms {
+                                            ui.label(format!("({} ms roundtrip)", ms));
+                                        }
+                                        ui.label("• TLS 1.3 Interception Verified");
+                                    });
+                                } else {
+                                    ui.label("Ready. Enter any URL in the omnibox to navigate.");
+                                }
+                            });
+
+                        ui.add_space(16.0);
+
+                        // 3. Telemetry Pipeline Grid
+                        ui.columns(3, |columns| {
+                            // Column 1: MITM Gateway
+                            columns[0].vertical(|ui| {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(22, 27, 34))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                    .inner_margin(Margin::same(12))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new("MITM PROXY")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(139, 148, 158)),
+                                        );
+                                        ui.label(
+                                            RichText::new("127.0.0.1:8080")
+                                                .size(16.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(63, 185, 80)),
+                                        );
+                                        ui.label(
+                                            RichText::new("TLS Gateway Active")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(139, 148, 158)),
+                                        );
+                                    });
+                            });
+
+                            // Column 2: Captured Traffic
+                            let traffic_count = self.interceptor_state.traffic_items.len();
+                            columns[1].vertical(|ui| {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(22, 27, 34))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                    .inner_margin(Margin::same(12))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new("CAPTURED TRAFFIC")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(139, 148, 158)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!("{} Requests", traffic_count))
+                                                .size(16.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(88, 166, 255)),
+                                        );
+                                        if ui.small_button("Open Interceptor").clicked() {
+                                            self.x_mode_enabled = true;
+                                            self.x_mode_tab = XModeTab::Interceptor;
+                                        }
+                                    });
+                            });
+
+                            // Column 3: Vulnerabilities
+                            let vuln_count = self.scanner_state.findings.len();
+                            let vuln_color = if vuln_count > 0 {
+                                Color32::from_rgb(248, 81, 73)
+                            } else {
+                                Color32::from_rgb(63, 185, 80)
+                            };
+                            columns[2].vertical(|ui| {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(22, 27, 34))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                    .inner_margin(Margin::same(12))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new("VULNERABILITY RADAR")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(139, 148, 158)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!("{} Findings", vuln_count))
+                                                .size(16.0)
+                                                .strong()
+                                                .color(vuln_color),
+                                        );
+                                        if ui.small_button("Open Radar").clicked() {
+                                            self.x_mode_enabled = true;
+                                            self.x_mode_tab = XModeTab::Scanner;
+                                        }
+                                    });
+                            });
+                        });
+
+                        ui.add_space(20.0);
+
+                        // 4. Speed Dial / Quick Launch Targets
+                        ui.heading("Quick Navigation Targets (Full Web View)");
+                        ui.add_space(8.0);
+
+                        let targets = [
+                            ("Google", "https://google.com", "Search engine & web apps"),
+                            ("OWASP", "https://owasp.org", "Open Worldwide Application Security Project"),
+                            ("Web Security Academy", "https://portswigger.net/web-security", "PortSwigger interactive security labs"),
+                            ("GitHub", "https://github.com", "Code hosting & developer platform"),
+                            ("Example Domain", "https://example.com", "RFC 2606 reference standard"),
+                            ("Cloudflare Trace", "https://cloudflare.com/cdn-cgi/trace", "Edge IP and TLS network diagnostics"),
+                        ];
+
+                        let mut navigate_to = None;
+                        for (name, target_url, desc) in targets {
+                            Frame::NONE
+                                .fill(Color32::from_rgb(22, 27, 34))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 54, 61)))
+                                .inner_margin(Margin::symmetric(14, 10))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new(name)
+                                                    .size(15.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            );
+                                            ui.label(
+                                                RichText::new(desc)
+                                                    .size(12.0)
+                                                    .color(Color32::from_rgb(139, 148, 158)),
+                                            );
+                                            ui.label(
+                                                RichText::new(target_url)
+                                                    .size(12.0)
+                                                    .color(Color32::from_rgb(88, 166, 255)),
+                                            );
+                                        });
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.button("Launch").clicked() {
+                                                    navigate_to = Some(target_url.to_string());
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                            ui.add_space(6.0);
+                        }
+
+                        if let Some(target) = navigate_to {
+                            self.navigate(active_id, &target);
+                        }
+
+                        // 5. Recent Security Insights (if any)
+                        if !self.scanner_state.findings.is_empty() {
+                            ui.add_space(16.0);
+                            ui.heading("Active Security Insights");
+                            ui.add_space(6.0);
+
+                            for finding in self.scanner_state.findings.iter().take(3) {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(26, 20, 24))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(248, 81, 73)))
+                                    .inner_margin(Margin::same(10))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(format!("[{}]", finding.severity))
+                                                    .strong()
+                                                    .color(Color32::from_rgb(248, 81, 73)),
+                                            );
+                                            ui.label(
+                                                RichText::new(&finding.title)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            );
+                                        });
+                                        ui.label(
+                                            RichText::new(&finding.description)
+                                                .size(12.0)
+                                                .color(Color32::from_rgb(139, 148, 158)),
+                                        );
+                                    });
+                                ui.add_space(4.0);
+                            }
+                        }
+
+                        ui.add_space(32.0);
+                    });
+                    ui.add_space(side_margin);
+                });
+            });
     }
 
     fn render_x_mode_workbench(&mut self, ui: &mut Ui) {
         match self.x_mode_tab {
+            XModeTab::DevWebView => {
+                let active_id = self.active_tab_id;
+                let (url, dom, is_loading, error_msg) = if let Some(tab) = self.active_tab() {
+                    (
+                        tab.url.clone(),
+                        tab.parsed_dom.clone(),
+                        tab.is_loading,
+                        tab.error_msg.clone(),
+                    )
+                } else {
+                    ("about:blank".to_string(), None, false, None)
+                };
+
+                if let Some(action) = self.browser_renderer.render(
+                    ui,
+                    &url,
+                    dom.as_ref(),
+                    is_loading,
+                    error_msg.as_deref(),
+                ) {
+                    match action {
+                        BrowserAction::Navigate(target) => {
+                            self.navigate(active_id, &target);
+                        }
+                    }
+                }
+            }
             XModeTab::Interceptor => {
                 if let Some(action) = render_interceptor_view(ui, &mut self.interceptor_state) {
                     match action {

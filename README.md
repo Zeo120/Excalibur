@@ -15,7 +15,7 @@
 
 - **Independent Engine**: Zero Chromium or WebKit dependency. Custom parsing and rendering pipeline with full inspection of every DOM node, script hook, and network frame.
 - **Dual Interface Modes**:
-  - **Modern GUI Browser & X-Mode Workbench**: Hardware-accelerated (`egui` / `wgpu`) daily browser featuring multi-tab browsing, omnibox navigation, visual DOM rendering with clickable links, and a dedicated menu toggle (`[ X-MODE ]`) to unveil the full penetration testing workbench (Traffic Interceptor, Request Repeater, Vulnerability Radar, DOM Inspector, and QuickJS XSS Sink Interceptor).
+  - **Modern GUI Browser & X-Mode Workbench**: Hardware-accelerated (`egui` / `wgpu`) interface with Full Web-View as the default experience (chromeless real-world browser window routed via Excalibur's zero-trust proxy `127.0.0.1:8080`), multi-tab browsing, speed dial, live security telemetry, and a dedicated menu toggle (`[ X-MODE ]`) to launch the full penetration testing workbench (Dev Web View, Live Interceptor, Request Repeater, Vulnerability Radar, DOM Tree & Scripts, and MITM Proxy).
   - **Full-Screen Terminal TUI**: Keyboard-driven (`ratatui`) interface for SSH sessions, headless environments, and terminal workflows.
 - **Dual-Role Network Engine**:
   - Internal browser request dispatcher with JA3/JA4 TLS fingerprint spoofing and HTTP/2 framing.
