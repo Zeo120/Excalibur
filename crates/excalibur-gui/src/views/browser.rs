@@ -41,32 +41,48 @@ pub struct YouTubeWatchDetails {
     pub description: String,
 }
 
+/// Load state of an image URL in the [`ThumbnailCache`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageState {
+    NotRequested,
+    Loading,
+    Ready,
+    /// The image could not be shown; the string says why.
+    Failed(String),
+}
+
+type ImageResult = Result<egui::ColorImage, String>;
+
 /// Asynchronous texture and thumbnail loader leveraging Excalibur's resilient HTTP client.
+/// Every request ends in either a texture or an explicit failure.
 pub struct ThumbnailCache {
     textures: HashMap<String, egui::TextureHandle>,
     pending: HashSet<String>,
-    failed: HashSet<String>,
-    tx: tokio::sync::mpsc::UnboundedSender<(String, egui::ColorImage)>,
-    rx: tokio::sync::mpsc::UnboundedReceiver<(String, egui::ColorImage)>,
+    failed: HashMap<String, String>,
+    tx: tokio::sync::mpsc::UnboundedSender<(String, ImageResult)>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<(String, ImageResult)>,
     http_client: Arc<excalibur_core::HttpClient>,
 }
 
 impl Default for ThumbnailCache {
     fn default() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = excalibur_core::HttpClient::new(excalibur_core::ClientOptions::default())
-            .unwrap_or_else(|_| {
-                excalibur_core::HttpClient::new(excalibur_core::ClientOptions {
-                    bypass_tls_verification: true,
-                    timeout_seconds: 10,
-                    ..Default::default()
-                })
-                .expect("Failed to initialize HttpClient fallback")
-            });
+        let client = excalibur_core::HttpClient::new(excalibur_core::ClientOptions {
+            timeout_seconds: 15,
+            ..Default::default()
+        })
+        .unwrap_or_else(|_| {
+            excalibur_core::HttpClient::new(excalibur_core::ClientOptions {
+                bypass_tls_verification: true,
+                timeout_seconds: 10,
+                ..Default::default()
+            })
+            .expect("Failed to initialize HttpClient fallback")
+        });
         Self {
             textures: HashMap::new(),
             pending: HashSet::new(),
-            failed: HashSet::new(),
+            failed: HashMap::new(),
             tx,
             rx,
             http_client: Arc::new(client),
@@ -80,10 +96,32 @@ impl ThumbnailCache {
     }
 
     pub fn poll_incoming(&mut self, ctx: &egui::Context) {
-        while let Ok((url, color_image)) = self.rx.try_recv() {
-            let handle = ctx.load_texture(&url, color_image, egui::TextureOptions::LINEAR);
+        while let Ok((url, result)) = self.rx.try_recv() {
             self.pending.remove(&url);
-            self.textures.insert(url, handle);
+            match result {
+                Ok(color_image) => {
+                    let handle = ctx.load_texture(&url, color_image, egui::TextureOptions::LINEAR);
+                    self.textures.insert(url, handle);
+                }
+                Err(reason) => {
+                    tracing::debug!("Image {} failed: {}", url, reason);
+                    self.failed.insert(url, reason);
+                }
+            }
+        }
+    }
+
+    /// Current state of `url` without starting a request.
+    pub fn state(&self, url: &str) -> ImageState {
+        let clean = url.trim();
+        if self.textures.contains_key(clean) {
+            ImageState::Ready
+        } else if let Some(reason) = self.failed.get(clean) {
+            ImageState::Failed(reason.clone())
+        } else if self.pending.contains(clean) {
+            ImageState::Loading
+        } else {
+            ImageState::NotRequested
         }
     }
 
@@ -95,52 +133,63 @@ impl ThumbnailCache {
         self.poll_incoming(ctx);
 
         let clean = url.trim();
-        if clean.is_empty() {
+        if clean.is_empty() || self.failed.contains_key(clean) {
             return None;
         }
-
         if self.textures.contains_key(clean) {
             return self.textures.get(clean);
         }
-
-        if self.failed.contains(clean) {
+        if self.pending.contains(clean) {
             return None;
         }
 
-        if !self.pending.contains(clean) {
-            self.pending.insert(clean.to_string());
-            let client = self.http_client.clone();
-            let tx = self.tx.clone();
-            let url_clone = clean.to_string();
-            let ctx_clone = ctx.clone();
-
-            tokio::spawn(async move {
-                let mut req = excalibur_core::HttpRequest::new("GET", &url_clone);
-                req.headers.append(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0",
-                );
-                match client.dispatch(&req).await {
-                    Ok(resp) if (200..300).contains(&resp.status) => {
-                        let bytes = resp.body;
-                        match image::load_from_memory(&bytes) {
-                            Ok(dyn_img) => {
-                                let rgba = dyn_img.to_rgba8();
-                                let size = [rgba.width() as usize, rgba.height() as usize];
-                                let color_image =
-                                    egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-                                let _ = tx.send((url_clone, color_image));
-                                ctx_clone.request_repaint();
-                            }
-                            Err(e) => {
-                                tracing::debug!("Failed to decode thumbnail {}: {}", url_clone, e);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            });
+        let scheme_ok = url::Url::parse(clean)
+            .map(|u| matches!(u.scheme(), "http" | "https"))
+            .unwrap_or(false);
+        if !scheme_ok {
+            let reason = if clean.starts_with("data:") {
+                "Inline data: images are not supported yet".to_string()
+            } else {
+                "Unsupported or invalid image URL".to_string()
+            };
+            self.failed.insert(clean.to_string(), reason);
+            return None;
         }
+
+        self.pending.insert(clean.to_string());
+        let client = self.http_client.clone();
+        let tx = self.tx.clone();
+        let url_clone = clean.to_string();
+        let ctx_clone = ctx.clone();
+
+        tokio::spawn(async move {
+            let mut req = excalibur_core::HttpRequest::new("GET", &url_clone);
+            req.headers.append(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0",
+            );
+            req.headers
+                .append("Accept", "image/png,image/jpeg,image/webp,image/*;q=0.8");
+            let result = match client.dispatch(&req).await {
+                Ok(resp) if (200..300).contains(&resp.status) => {
+                    match image::load_from_memory(&resp.body) {
+                        Ok(dyn_img) => {
+                            let rgba = dyn_img.to_rgba8();
+                            let size = [rgba.width() as usize, rgba.height() as usize];
+                            Ok(egui::ColorImage::from_rgba_unmultiplied(
+                                size,
+                                rgba.as_raw(),
+                            ))
+                        }
+                        Err(e) => Err(format!("Unsupported or corrupt image ({})", e)),
+                    }
+                }
+                Ok(resp) => Err(format!("Server returned HTTP {}", resp.status)),
+                Err(e) => Err(format!("Could not load image: {}", e)),
+            };
+            let _ = tx.send((url_clone, result));
+            ctx_clone.request_repaint();
+        });
 
         None
     }
@@ -718,6 +767,17 @@ impl BrowserRenderer {
                                         .corner_radius(rad),
                                 );
                             } else {
+                                let alt = attributes
+                                    .get("alt")
+                                    .map(|a| a.trim())
+                                    .filter(|a| !a.is_empty());
+                                let (headline, detail) = match self.thumbnail_cache.state(&resolved)
+                                {
+                                    ImageState::Failed(reason) => {
+                                        ("Image unavailable".to_string(), Some(reason))
+                                    }
+                                    _ => ("Loading image…".to_string(), None),
+                                };
                                 Frame::NONE
                                     .fill(colors::field())
                                     .stroke(Stroke::new(1.0_f32, colors::border()))
@@ -725,10 +785,24 @@ impl BrowserRenderer {
                                     .inner_margin(Margin::symmetric(14, 10))
                                     .show(ui, |ui| {
                                         ui.label(
-                                            RichText::new("[Image Loading...]")
-                                                .size(11.0)
-                                                .color(colors::text_faint()),
+                                            RichText::new(alt.unwrap_or(&headline))
+                                                .size(12.0)
+                                                .color(colors::text_dim()),
                                         );
+                                        if alt.is_some() {
+                                            ui.label(
+                                                RichText::new(&headline)
+                                                    .size(11.0)
+                                                    .color(colors::text_faint()),
+                                            );
+                                        }
+                                        if let Some(reason) = detail {
+                                            ui.label(
+                                                RichText::new(reason)
+                                                    .size(11.0)
+                                                    .color(colors::text_faint()),
+                                            );
+                                        }
                                     });
                             }
                             ui.add_space(4.0);

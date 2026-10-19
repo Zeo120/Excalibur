@@ -595,3 +595,103 @@ async fn test_plain_text_page_is_decoded_and_not_parsed() {
     assert!(dom.find_by_tag("script").is_empty());
     assert_eq!(dom.find_by_tag("pre")[0].text_content(), tab.raw_html);
 }
+
+// ───────────── Image load states (#5) ─────────────
+
+async fn serve_once(status_line: &str, content_type: &str, body: Vec<u8>) -> String {
+    let mut response = format!(
+        "HTTP/1.1 {status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(&body);
+    let url = one_shot_server(response).await;
+    url.replace("/notes.txt", "/image")
+}
+
+async fn settle_image(
+    cache: &mut excalibur_gui::views::browser::ThumbnailCache,
+    url: &str,
+) -> excalibur_gui::views::browser::ImageState {
+    use excalibur_gui::views::browser::ImageState;
+    let ctx = egui::Context::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let _ = cache.get_or_request(&ctx, url);
+        match cache.state(url) {
+            ImageState::Loading | ImageState::NotRequested => {}
+            settled => return settled,
+        }
+        assert!(std::time::Instant::now() < deadline, "image never settled");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_image_http_error_is_reported() {
+    use excalibur_gui::views::browser::{ImageState, ThumbnailCache};
+    let url = serve_once("404 Not Found", "text/html", b"nope".to_vec()).await;
+    let mut cache = ThumbnailCache::new();
+    match settle_image(&mut cache, &url).await {
+        ImageState::Failed(reason) => assert!(reason.contains("404"), "{reason}"),
+        other => panic!("expected failure, got {other:?}"),
+    }
+    // Failures are cached: no new request, same answer.
+    assert!(cache
+        .get_or_request(&egui::Context::default(), &url)
+        .is_none());
+    assert!(matches!(cache.state(&url), ImageState::Failed(_)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_undecodable_image_is_reported() {
+    use excalibur_gui::views::browser::{ImageState, ThumbnailCache};
+    let url = serve_once("200 OK", "image/png", b"definitely not a png".to_vec()).await;
+    let mut cache = ThumbnailCache::new();
+    match settle_image(&mut cache, &url).await {
+        ImageState::Failed(reason) => assert!(reason.contains("corrupt"), "{reason}"),
+        other => panic!("expected failure, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_unreachable_image_is_reported() {
+    use excalibur_gui::views::browser::{ImageState, ThumbnailCache};
+    // Bind then drop to obtain a port nothing listens on.
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let url = format!("http://127.0.0.1:{port}/x.png");
+    let mut cache = ThumbnailCache::new();
+    assert!(matches!(
+        settle_image(&mut cache, &url).await,
+        ImageState::Failed(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_data_url_image_fails_without_network() {
+    use excalibur_gui::views::browser::{ImageState, ThumbnailCache};
+    let mut cache = ThumbnailCache::new();
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    assert!(cache
+        .get_or_request(&egui::Context::default(), url)
+        .is_none());
+    match cache.state(url) {
+        ImageState::Failed(reason) => assert!(reason.contains("data:")),
+        other => panic!("expected immediate failure, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_valid_png_loads() {
+    use excalibur_gui::views::browser::{ImageState, ThumbnailCache};
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let url = serve_once("200 OK", "image/png", png).await;
+    let mut cache = ThumbnailCache::new();
+    assert_eq!(settle_image(&mut cache, &url).await, ImageState::Ready);
+}
