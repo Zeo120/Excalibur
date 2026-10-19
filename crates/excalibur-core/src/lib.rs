@@ -1,6 +1,7 @@
 //! `excalibur-core`: Network client, TLS/JA3 engine, protocol parser, and SQLite persistence.
 
 pub mod client;
+pub mod content;
 pub mod dns;
 pub mod error;
 pub mod network;

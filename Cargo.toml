@@ -33,6 +33,7 @@ tokio-rustls = "0.26"
 webpki-roots = "0.26"
 rcgen = "0.13" # Dynamic CA and TLS certificate generation for MITM
 url = "2.5"
+encoding_rs = "0.8"
 
 # Database & Storage
 rusqlite = { version = "0.33", features = ["bundled"] }

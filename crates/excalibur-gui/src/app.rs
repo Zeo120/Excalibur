@@ -400,7 +400,11 @@ impl GuiApp {
 
                 match client.dispatch(&req).await {
                     Ok(res) => {
-                        let body_str = String::from_utf8_lossy(&res.body).to_string();
+                        let (body_str, _encoding) = excalibur_core::content::decode_text(
+                            &res.body,
+                            res.headers.get("content-type"),
+                            true,
+                        );
                         let dom = HtmlParser::parse(&body_str);
 
                         // Extract title

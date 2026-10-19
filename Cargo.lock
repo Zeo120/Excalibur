@@ -1253,6 +1253,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
+ "encoding_rs",
  "http-body-util",
  "hyper",
  "hyper-util",
