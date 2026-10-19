@@ -874,32 +874,13 @@ impl GuiApp {
     }
 
     pub(crate) fn normalize_target(&self, raw: &str) -> String {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            "about:blank".to_string()
-        } else if trimmed == "about:blank"
-            || trimmed.starts_with("excalibur://")
-            || trimmed.starts_with("http://")
-            || trimmed.starts_with("https://")
-        {
-            trimmed.to_string()
-        } else if trimmed.contains('.') && !trimmed.contains(' ') {
-            format!("https://{}", trimmed)
-        } else {
-            let engine = self
-                .storage
-                .get_browser_setting("search_engine")
-                .unwrap_or_default()
-                .unwrap_or_else(|| "DuckDuckGo".to_string());
-            let encoded = trimmed.replace(' ', "+");
-            match engine.as_str() {
-                "Google" => format!("https://www.google.com/search?q={}", encoded),
-                "Brave" => format!("https://search.brave.com/search?q={}", encoded),
-                "SearXNG" => format!("https://searx.be/search?q={}", encoded),
-                "YouTube" => format!("https://www.youtube.com/results?search_query={}", encoded),
-                _ => format!("https://html.duckduckgo.com/html/?q={}", encoded),
-            }
-        }
+        let engine = self
+            .storage
+            .get_browser_setting("search_engine")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        crate::urls::normalize_input(raw, crate::urls::SearchEngine::from_setting(&engine))
     }
 
     fn render_browser_content(&mut self, ui: &mut Ui) {

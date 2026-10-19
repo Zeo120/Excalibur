@@ -1,4 +1,5 @@
 use crate::theme::colors;
+use crate::urls::{query_param, with_query_param, SearchEngine};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
 use excalibur_dom::{CssColor, DomNode, NodeType, StyleResolver, StyleSheet};
 use std::collections::{HashMap, HashSet};
@@ -1017,15 +1018,19 @@ impl BrowserRenderer {
                                             && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                                     && !current_val.trim().is_empty()
                                 {
-                                    let query = current_val.trim().replace(' ', "+");
+                                    let query = current_val.trim();
                                     let search_target = if current_url.contains("youtube.com") {
-                                        format!("https://www.youtube.com/results?search_query={}", query)
+                                        SearchEngine::YouTube.search_url(query)
                                     } else if current_url.contains("wikipedia.org") {
-                                        format!("https://en.wikipedia.org/wiki/Special:Search?search={}", query)
+                                        with_query_param(
+                                            "https://en.wikipedia.org/wiki/Special:Search",
+                                            "search",
+                                            query,
+                                        )
                                     } else if current_url.contains("duckduckgo.com") {
-                                        format!("https://duckduckgo.com/?q={}", query)
+                                        SearchEngine::DuckDuckGo.search_url(query)
                                     } else {
-                                        format!("https://www.google.com/search?q={}", query)
+                                        SearchEngine::Google.search_url(query)
                                     };
                                     *action = Some(BrowserAction::Navigate(search_target));
                                 }
@@ -1269,14 +1274,7 @@ impl BrowserRenderer {
         videos: &[YouTubeVideoItem],
         action: &mut Option<BrowserAction>,
     ) {
-        let query_str = if let Some(pos) = url.find("search_query=") {
-            let q_part = &url[pos + 13..];
-            let end = q_part.find('&').unwrap_or(q_part.len());
-            let raw_q = &q_part[..end];
-            raw_q.replace('+', " ").replace("%20", " ")
-        } else {
-            String::new()
-        };
+        let query_str = query_param(url, "search_query").unwrap_or_default();
 
         ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -1342,10 +1340,8 @@ impl BrowserRenderer {
                                     {
                                         let q = yt_search_val.trim();
                                         if !q.is_empty() {
-                                            search_target = Some(format!(
-                                                "https://www.youtube.com/results?search_query={}",
-                                                q.replace(' ', "+")
-                                            ));
+                                            search_target =
+                                                Some(SearchEngine::YouTube.search_url(q));
                                         }
                                     }
 
@@ -1370,7 +1366,7 @@ impl BrowserRenderer {
                                         "Gaming",
                                     ];
                                     for t in topics {
-                                        let is_active = url.contains(&t.replace(' ', "+"));
+                                        let is_active = query_str == t;
                                         let (bg, border, fg) = if is_active {
                                             (Color32::from_rgb(241, 243, 244), Color32::from_rgb(241, 243, 244), Color32::from_rgb(18, 18, 18))
                                         } else {
@@ -1498,10 +1494,9 @@ impl BrowserRenderer {
                                                     )
                                                     .clicked()
                                                 {
-                                                    *action = Some(BrowserAction::Navigate(format!(
-                                                        "https://www.youtube.com/results?search_query={}",
-                                                        qs.replace(' ', "+")
-                                                    )));
+                                                    *action = Some(BrowserAction::Navigate(
+                                                        SearchEngine::YouTube.search_url(qs),
+                                                    ));
                                                 }
                                             }
                                         });

@@ -5,6 +5,7 @@ pub mod audio;
 pub mod chrome;
 pub mod icons;
 pub mod theme;
+pub mod urls;
 pub mod views;
 pub mod widgets;
 
