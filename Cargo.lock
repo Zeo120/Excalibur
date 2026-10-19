@@ -1156,6 +1156,7 @@ dependencies = [
  "excalibur-dom",
  "excalibur-proxy",
  "excalibur-script",
+ "image",
  "serde",
  "serde_json",
  "tokio",
@@ -1900,6 +1901,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
 use excalibur_dom::{CssColor, DomNode, NodeType, StyleResolver, StyleSheet};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[inline]
 fn to_egui_color(col: CssColor) -> Color32 {
@@ -34,6 +35,190 @@ pub struct YouTubeWatchDetails {
     pub description: String,
 }
 
+/// Asynchronous texture and thumbnail loader leveraging Excalibur's resilient HTTP client.
+pub struct ThumbnailCache {
+    textures: HashMap<String, egui::TextureHandle>,
+    pending: HashSet<String>,
+    failed: HashSet<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<(String, egui::ColorImage)>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<(String, egui::ColorImage)>,
+    http_client: Arc<excalibur_core::HttpClient>,
+}
+
+impl Default for ThumbnailCache {
+    fn default() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = excalibur_core::HttpClient::new(excalibur_core::ClientOptions::default())
+            .unwrap_or_else(|_| {
+                excalibur_core::HttpClient::new(excalibur_core::ClientOptions {
+                    bypass_tls_verification: true,
+                    timeout_seconds: 10,
+                    ..Default::default()
+                })
+                .expect("Failed to initialize HttpClient fallback")
+            });
+        Self {
+            textures: HashMap::new(),
+            pending: HashSet::new(),
+            failed: HashSet::new(),
+            tx,
+            rx,
+            http_client: Arc::new(client),
+        }
+    }
+}
+
+impl ThumbnailCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn poll_incoming(&mut self, ctx: &egui::Context) {
+        while let Ok((url, color_image)) = self.rx.try_recv() {
+            let handle = ctx.load_texture(&url, color_image, egui::TextureOptions::LINEAR);
+            self.pending.remove(&url);
+            self.textures.insert(url, handle);
+        }
+    }
+
+    pub fn get_or_request(
+        &mut self,
+        ctx: &egui::Context,
+        url: &str,
+    ) -> Option<&egui::TextureHandle> {
+        self.poll_incoming(ctx);
+
+        let clean = url.trim();
+        if clean.is_empty() {
+            return None;
+        }
+
+        if self.textures.contains_key(clean) {
+            return self.textures.get(clean);
+        }
+
+        if self.failed.contains(clean) {
+            return None;
+        }
+
+        if !self.pending.contains(clean) {
+            self.pending.insert(clean.to_string());
+            let client = self.http_client.clone();
+            let tx = self.tx.clone();
+            let url_clone = clean.to_string();
+            let ctx_clone = ctx.clone();
+
+            tokio::spawn(async move {
+                let mut req = excalibur_core::HttpRequest::new("GET", &url_clone);
+                req.headers.append(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0",
+                );
+                match client.dispatch(&req).await {
+                    Ok(resp) if (200..300).contains(&resp.status) => {
+                        let bytes = resp.body;
+                        match image::load_from_memory(&bytes) {
+                            Ok(dyn_img) => {
+                                let rgba = dyn_img.to_rgba8();
+                                let size = [rgba.width() as usize, rgba.height() as usize];
+                                let color_image =
+                                    egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                                let _ = tx.send((url_clone, color_image));
+                                ctx_clone.request_repaint();
+                            }
+                            Err(e) => {
+                                tracing::debug!("Failed to decode thumbnail {}: {}", url_clone, e);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            });
+        }
+
+        None
+    }
+}
+
+/// Interactive In-Browser Media Player State
+#[derive(Clone, Debug)]
+pub struct VideoPlayerState {
+    pub is_playing: bool,
+    pub current_time: f32,
+    pub duration: f32,
+    pub volume: f32,
+    pub is_muted: bool,
+    pub speed: f32,
+    pub quality: String,
+    pub theater_mode: bool,
+    pub active_video_id: String,
+    pub description_expanded: bool,
+    pub last_tick: Option<std::time::Instant>,
+    pub waveform_phase: f32,
+}
+
+impl Default for VideoPlayerState {
+    fn default() -> Self {
+        Self {
+            is_playing: true,
+            current_time: 0.0,
+            duration: 214.0,
+            volume: 0.85,
+            is_muted: false,
+            speed: 1.0,
+            quality: "1080p 60fps HD".to_string(),
+            theater_mode: false,
+            active_video_id: String::new(),
+            description_expanded: false,
+            last_tick: None,
+            waveform_phase: 0.0,
+        }
+    }
+}
+
+impl VideoPlayerState {
+    pub fn update_playback(&mut self, ctx: &egui::Context) {
+        let now = std::time::Instant::now();
+        if let Some(prev) = self.last_tick {
+            let dt = now.duration_since(prev).as_secs_f32().min(0.2);
+            if self.is_playing {
+                self.current_time += dt * self.speed;
+                if self.current_time >= self.duration {
+                    self.current_time = self.duration;
+                    self.is_playing = false;
+                }
+                self.waveform_phase =
+                    (self.waveform_phase + dt * 4.5) % (std::f32::consts::PI * 2.0);
+                ctx.request_repaint();
+            }
+        }
+        self.last_tick = Some(now);
+    }
+}
+
+fn format_duration_clock(secs: f32) -> String {
+    let s = secs.max(0.0) as u32;
+    let mins = s / 60;
+    let rem_s = s % 60;
+    format!("{:02}:{:02}", mins, rem_s)
+}
+
+fn parse_duration_seconds(d_str: &str) -> f32 {
+    let parts: Vec<&str> = d_str.split(':').collect();
+    if parts.len() == 2 {
+        let m: f32 = parts[0].trim().parse().unwrap_or(3.0);
+        let s: f32 = parts[1].trim().parse().unwrap_or(30.0);
+        m * 60.0 + s
+    } else if parts.len() == 3 {
+        let h: f32 = parts[0].trim().parse().unwrap_or(0.0);
+        let m: f32 = parts[1].trim().parse().unwrap_or(0.0);
+        let s: f32 = parts[2].trim().parse().unwrap_or(0.0);
+        h * 3600.0 + m * 60.0 + s
+    } else {
+        214.0
+    }
+}
+
 /// Visual browser viewport rendering DOM nodes into interactive GUI elements.
 pub struct BrowserRenderer {
     pub input_states: HashMap<String, String>,
@@ -45,6 +230,8 @@ pub struct BrowserRenderer {
     pub clear_history_confirm: bool,
     pub zoom: f32,
     pub find_query: String,
+    pub thumbnail_cache: ThumbnailCache,
+    pub player_state: VideoPlayerState,
 }
 
 impl Default for BrowserRenderer {
@@ -59,6 +246,8 @@ impl Default for BrowserRenderer {
             clear_history_confirm: false,
             zoom: 1.0,
             find_query: String::new(),
+            thumbnail_cache: ThumbnailCache::new(),
+            player_state: VideoPlayerState::default(),
         }
     }
 }
@@ -125,9 +314,22 @@ impl BrowserRenderer {
 
         // YouTube SPA client fallback: render interactive YouTube hub
         let is_youtube = url.contains("youtube.com")
+            || url.contains("youtu.be")
+            || url.starts_with("excalibur://watch")
             || (url.contains("youtube") && raw_html.contains("ytInitialData"));
         if is_youtube {
-            let watch_details = extract_youtube_watch_details(raw_html);
+            let mut watch_details = extract_youtube_watch_details(raw_html);
+            if watch_details.is_none() {
+                if let Some(vid) = extract_video_id_from_url(url) {
+                    watch_details = Some(YouTubeWatchDetails {
+                        video_id: vid.clone(),
+                        title: format!("YouTube Video ({})", vid),
+                        author: "YouTube Creator".to_string(),
+                        views: "Available in Browser".to_string(),
+                        description: "In-browser video playback in Excalibur.".to_string(),
+                    });
+                }
+            }
             let videos = extract_youtube_videos(raw_html);
             self.render_youtube_hub(ui, url, watch_details.as_ref(), &videos, &mut action);
             return action;
@@ -141,7 +343,7 @@ impl BrowserRenderer {
                 .show(ui, |ui| {
                     ui.add_space(12.0);
                     let available_width = ui.available_width();
-                    let content_width = (available_width.min(940.0) * self.zoom.clamp(0.6, 2.5))
+                    let content_width = (available_width.min(1280.0) * self.zoom.clamp(0.6, 2.5))
                         .min(available_width);
                     let side_margin = ((available_width - content_width) / 2.0).max(16.0);
 
@@ -299,7 +501,7 @@ impl BrowserRenderer {
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(24.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(920.0);
+            let content_width = available_width.min(1160.0);
             let side_margin = ((available_width - content_width) / 2.0).max(16.0);
 
             ui.horizontal(|ui| {
@@ -321,31 +523,28 @@ impl BrowserRenderer {
                                 "Independent Security Browser & Penetration Testing Workbench",
                             )
                             .size(14.0)
-                            .color(Color32::from_rgb(125, 211, 252)),
+                            .color(Color32::from_rgb(148, 163, 184)),
                         );
                         ui.add_space(12.0);
 
                         ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                             let badges = [
-                                ("[ NON-CHROMIUM ]", Color32::from_rgb(0, 240, 255)),
-                                ("[ PURE-RUST DOM ]", Color32::from_rgb(0, 255, 157)),
-                                ("[ ZERO VENDOR BLINK ]", Color32::from_rgb(250, 204, 21)),
-                                (
-                                    "[ MITM PROXY 127.0.0.1:8080 ]",
-                                    Color32::from_rgb(255, 60, 90),
-                                ),
+                                ("NON-CHROMIUM", Color32::from_rgb(56, 189, 248)),
+                                ("PURE-RUST DOM", Color32::from_rgb(52, 211, 153)),
+                                ("ZERO VENDOR BLINK", Color32::from_rgb(251, 191, 36)),
+                                ("MITM PROXY :8080", Color32::from_rgb(248, 113, 113)),
                             ];
 
                             for (badge, color) in badges {
                                 Frame::NONE
-                                    .fill(Color32::from_rgb(8, 14, 26))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
-                                    .corner_radius(egui::CornerRadius::same(6))
-                                    .inner_margin(Margin::symmetric(8, 4))
+                                    .fill(Color32::from_rgb(15, 20, 31))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                                    .corner_radius(egui::CornerRadius::same(12))
+                                    .inner_margin(Margin::symmetric(10, 4))
                                     .show(ui, |ui| {
                                         ui.label(
-                                            RichText::new(badge).size(11.0).strong().color(color),
+                                            RichText::new(badge).size(10.5).strong().color(color),
                                         );
                                     });
                             }
@@ -1710,13 +1909,138 @@ impl BrowserRenderer {
                             let resolved = self.resolve_url(current_url, src);
                             let rad = style.border_radius.unwrap_or(4.0).clamp(0.0, 20.0);
                             ui.add_space(4.0);
-                            ui.add(
-                                egui::Image::from_uri(&resolved)
-                                    .max_width(ui.available_width().min(600.0))
-                                    .corner_radius(rad),
-                            );
+                            if let Some(tex) =
+                                self.thumbnail_cache.get_or_request(ui.ctx(), &resolved)
+                            {
+                                ui.add(
+                                    egui::Image::from_texture(tex)
+                                        .max_width(ui.available_width().min(720.0))
+                                        .corner_radius(rad),
+                                );
+                            } else {
+                                Frame::NONE
+                                    .fill(Color32::from_rgb(15, 20, 31))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                                    .corner_radius(egui::CornerRadius::same(rad as u8))
+                                    .inner_margin(Margin::symmetric(14, 10))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new("[Image Loading...]")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(100, 116, 139)),
+                                        );
+                                    });
+                            }
                             ui.add_space(4.0);
                         }
+                    }
+                    "video" => {
+                        let src = attributes
+                            .get("src")
+                            .or_else(|| attributes.get("data-src"))
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        let poster = attributes.get("poster").map(|s| s.as_str()).unwrap_or("");
+                        let resolved_src = if !src.is_empty() {
+                            self.resolve_url(current_url, src)
+                        } else {
+                            let mut s = String::new();
+                            for child in &node.children {
+                                if let NodeType::Element { tag, attributes } = &child.node_type {
+                                    if tag == "source" {
+                                        if let Some(c_src) = attributes.get("src") {
+                                            s = self.resolve_url(current_url, c_src);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            s
+                        };
+
+                        ui.add_space(6.0);
+                        let player_w = ui.available_width().min(840.0);
+                        let player_h = (player_w * 9.0 / 16.0).clamp(200.0, 460.0);
+
+                        Frame::NONE
+                            .fill(Color32::from_rgb(11, 15, 23))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    let (rect, resp) = ui.allocate_exact_size(
+                                        egui::vec2(player_w - 20.0, player_h - 50.0),
+                                        egui::Sense::click(),
+                                    );
+                                    if resp.clicked() {
+                                        self.player_state.is_playing =
+                                            !self.player_state.is_playing;
+                                    }
+
+                                    let painter = ui.painter_at(rect);
+                                    painter.rect_filled(rect, 6.0, Color32::from_rgb(4, 7, 13));
+
+                                    if !poster.is_empty() {
+                                        let resolved_poster = self.resolve_url(current_url, poster);
+                                        if let Some(tex) = self
+                                            .thumbnail_cache
+                                            .get_or_request(ui.ctx(), &resolved_poster)
+                                        {
+                                            let uv = egui::Rect::from_min_max(
+                                                egui::pos2(0.0, 0.0),
+                                                egui::pos2(1.0, 1.0),
+                                            );
+                                            painter.image(tex.id(), rect, uv, Color32::WHITE);
+                                        }
+                                    }
+
+                                    let center = rect.center();
+                                    let sym = if self.player_state.is_playing {
+                                        "||"
+                                    } else {
+                                        ">"
+                                    };
+                                    painter.circle_filled(
+                                        center,
+                                        24.0,
+                                        Color32::from_rgba_unmultiplied(15, 20, 31, 200),
+                                    );
+                                    painter.text(
+                                        center,
+                                        egui::Align2::CENTER_CENTER,
+                                        sym,
+                                        egui::FontId::proportional(20.0),
+                                        Color32::from_rgb(56, 189, 248),
+                                    );
+
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .button(if self.player_state.is_playing {
+                                                "Pause"
+                                            } else {
+                                                "Play"
+                                            })
+                                            .clicked()
+                                        {
+                                            self.player_state.is_playing =
+                                                !self.player_state.is_playing;
+                                        }
+                                        ui.label(
+                                            RichText::new("In-Browser Media Player")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        );
+                                        if !resolved_src.is_empty()
+                                            && ui.button("Copy Stream URL").clicked()
+                                        {
+                                            ui.ctx().copy_text(resolved_src.clone());
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(6.0);
                     }
                     "form" => {
                         let bg_col = style
@@ -2206,15 +2530,13 @@ impl BrowserRenderer {
 
                         // If on a Watch page, render the Video Player Card
                         if let Some(watch) = watch_details {
-                            self.render_youtube_watch_player(ui, watch);
+                            self.render_youtube_watch_player(ui, watch, action, videos);
                             ui.add_space(16.0);
                         }
 
-                        // Video Cards Grid / Section
-                        if !videos.is_empty() {
-                            let section_title = if watch_details.is_some() {
-                                "Recommended Videos"
-                            } else if url.contains("search_query") {
+                        // Video Cards Grid / Section (when not watching a single video)
+                        if !videos.is_empty() && watch_details.is_none() {
+                            let section_title = if url.contains("search_query") {
                                 "Search Results"
                             } else {
                                 "Trending & Featured Videos"
@@ -2236,19 +2558,24 @@ impl BrowserRenderer {
 
                             ui.add_space(8.0);
 
-                            // Render 2-column or 3-column video cards
-                            let cols = if content_width > 750.0 { 2 } else { 1 };
-                            let chunk_size = videos.len().div_ceil(cols);
-
-                            ui.columns(cols, |columns| {
-                                for (col_idx, col_ui) in columns.iter_mut().enumerate() {
-                                    let start = col_idx * chunk_size;
-                                    let end = (start + chunk_size).min(videos.len());
-                                    for video in &videos[start..end] {
+                            // Render 2 balanced columns with fluid responsive width
+                            ui.horizontal(|ui| {
+                                let col_w = (content_width - 16.0) / 2.0;
+                                ui.vertical(|col_ui| {
+                                    col_ui.set_width(col_w);
+                                    for video in videos.iter().step_by(2) {
                                         self.render_video_card(col_ui, video, action);
-                                        col_ui.add_space(10.0);
+                                        col_ui.add_space(12.0);
                                     }
-                                }
+                                });
+                                ui.add_space(12.0);
+                                ui.vertical(|col_ui| {
+                                    col_ui.set_width(col_w);
+                                    for video in videos.iter().skip(1).step_by(2) {
+                                        self.render_video_card(col_ui, video, action);
+                                        col_ui.add_space(12.0);
+                                    }
+                                });
                             });
                         }
 
@@ -2319,35 +2646,100 @@ impl BrowserRenderer {
     }
 
     fn render_video_card(
-        &self,
+        &mut self,
         ui: &mut Ui,
         video: &YouTubeVideoItem,
         action: &mut Option<BrowserAction>,
     ) {
         Frame::NONE
-            .fill(Color32::from_rgb(10, 15, 26))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76)))
+            .fill(Color32::from_rgb(15, 20, 31))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
             .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(Margin::symmetric(12, 10))
+            .inner_margin(Margin::symmetric(10, 10))
             .show(ui, |ui| {
-                if !video.thumbnail_url.is_empty() {
-                    ui.add(
-                        egui::Image::from_uri(&video.thumbnail_url)
-                            .corner_radius(6.0)
-                            .max_height(140.0),
-                    );
-                    ui.add_space(6.0);
+                // 16:9 Thumbnail or Minimalist Loading Placeholder
+                let card_w = ui.available_width();
+                let thumb_h = (card_w * 9.0 / 16.0).clamp(110.0, 180.0);
+
+                let thumb_opt = if !video.thumbnail_url.is_empty() {
+                    self.thumbnail_cache
+                        .get_or_request(ui.ctx(), &video.thumbnail_url)
+                } else {
+                    None
+                };
+
+                let (rect, resp) =
+                    ui.allocate_exact_size(egui::vec2(card_w, thumb_h), egui::Sense::click());
+
+                if resp.clicked() {
+                    *action = Some(BrowserAction::Navigate(format!(
+                        "https://www.youtube.com/watch?v={}",
+                        video.id
+                    )));
                 }
 
-                let title_text = if video.title.len() > 70 {
-                    format!("{}...", &video.title[..67])
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, 6.0, Color32::from_rgb(11, 15, 23));
+
+                if let Some(tex) = thumb_opt {
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    painter.image(tex.id(), rect, uv, Color32::WHITE);
+                } else {
+                    let center = rect.center();
+                    painter.rect_stroke(
+                        rect,
+                        6.0,
+                        Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74)),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        "[ Play ]",
+                        egui::FontId::proportional(14.0),
+                        Color32::from_rgb(56, 189, 248),
+                    );
+                }
+
+                if resp.hovered() {
+                    painter.rect_filled(
+                        rect,
+                        6.0,
+                        Color32::from_rgba_unmultiplied(56, 189, 248, 25),
+                    );
+                }
+
+                if !video.duration.is_empty() {
+                    let tag_w = (video.duration.len() as f32 * 7.5 + 12.0).max(36.0);
+                    let tag_rect = egui::Rect::from_min_max(
+                        egui::pos2(rect.max.x - tag_w - 6.0, rect.max.y - 20.0),
+                        egui::pos2(rect.max.x - 6.0, rect.max.y - 4.0),
+                    );
+                    painter.rect_filled(
+                        tag_rect,
+                        3.0,
+                        Color32::from_rgba_unmultiplied(0, 0, 0, 200),
+                    );
+                    painter.text(
+                        tag_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        &video.duration,
+                        egui::FontId::monospace(10.0),
+                        Color32::from_rgb(226, 232, 240),
+                    );
+                }
+
+                ui.add_space(8.0);
+
+                let title_text = if video.title.len() > 65 {
+                    format!("{}...", &video.title[..62])
                 } else {
                     video.title.clone()
                 };
 
                 let title_btn = ui.link(
                     RichText::new(title_text)
-                        .size(13.5)
+                        .size(13.0)
                         .strong()
                         .color(Color32::from_rgb(241, 245, 249)),
                 );
@@ -2358,7 +2750,7 @@ impl BrowserRenderer {
                     )));
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(3.0);
 
                 ui.horizontal(|ui| {
                     ui.label(
@@ -2368,46 +2760,21 @@ impl BrowserRenderer {
                             .strong(),
                     );
 
-                    if !video.duration.is_empty() {
-                        Frame::NONE
-                            .fill(Color32::from_rgb(15, 23, 42))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
-                            .corner_radius(egui::CornerRadius::same(4))
-                            .inner_margin(Margin::symmetric(5, 1))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(&video.duration)
-                                        .size(10.0)
-                                        .color(Color32::from_rgb(148, 163, 184))
-                                        .monospace(),
-                                );
-                            });
+                    if !video.views.is_empty() {
+                        ui.label(
+                            RichText::new(format!("- {}", video.views))
+                                .size(11.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                        );
                     }
                 });
-
-                if !video.views.is_empty() || !video.published.is_empty() {
-                    let meta = format!(
-                        "{} {}",
-                        video.views,
-                        if video.published.is_empty() {
-                            String::new()
-                        } else {
-                            format!("- {}", video.published)
-                        }
-                    );
-                    ui.label(
-                        RichText::new(meta.trim())
-                            .size(11.0)
-                            .color(Color32::from_rgb(100, 116, 139)),
-                    );
-                }
 
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
                     if ui
                         .button(
-                            RichText::new("Watch Video")
+                            RichText::new("Watch")
                                 .size(11.0)
                                 .color(Color32::WHITE)
                                 .strong(),
@@ -2435,140 +2802,465 @@ impl BrowserRenderer {
             });
     }
 
-    fn render_youtube_watch_player(&self, ui: &mut Ui, watch: &YouTubeWatchDetails) {
+    fn render_youtube_watch_player(
+        &mut self,
+        ui: &mut Ui,
+        watch: &YouTubeWatchDetails,
+        action: &mut Option<BrowserAction>,
+        videos: &[YouTubeVideoItem],
+    ) {
+        // Initialize player for newly opened video
+        if self.player_state.active_video_id != watch.video_id {
+            self.player_state.active_video_id = watch.video_id.clone();
+            self.player_state.current_time = 0.0;
+            self.player_state.is_playing = true;
+            if let Some(matching) = videos.iter().find(|v| v.id == watch.video_id) {
+                self.player_state.duration = parse_duration_seconds(&matching.duration);
+            } else {
+                self.player_state.duration = 214.0;
+            }
+        }
+
+        // Progress playback tick
+        self.player_state.update_playback(ui.ctx());
+
+        let available_w = ui.available_width();
+        let player_w = if self.player_state.theater_mode {
+            available_w
+        } else {
+            available_w.min(940.0)
+        };
+        let screen_h = (player_w * 9.0 / 16.0).clamp(240.0, 530.0);
+
         Frame::NONE
-            .fill(Color32::from_rgb(6, 9, 15))
-            .stroke(Stroke::new(1.5_f32, Color32::from_rgb(37, 99, 235)))
+            .fill(Color32::from_rgb(11, 15, 23))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
             .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(Margin::symmetric(18, 14))
+            .inner_margin(Margin::symmetric(14, 12))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    Frame::NONE
-                        .fill(Color32::from_rgb(220, 38, 38))
-                        .corner_radius(egui::CornerRadius::same(4))
-                        .inner_margin(Margin::symmetric(6, 2))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new("NOW PLAYING")
-                                    .size(10.0)
-                                    .color(Color32::WHITE)
-                                    .strong(),
-                            );
-                        });
+                ui.set_width(player_w);
+                ui.vertical(|ui| {
+                    // 1. 16:9 Cinema Viewport Screen
+                    let (screen_rect, screen_resp) = ui
+                        .allocate_exact_size(egui::vec2(player_w, screen_h), egui::Sense::click());
 
-                    ui.label(
-                        RichText::new(format!("ID: {}", watch.video_id))
-                            .size(11.0)
-                            .color(Color32::from_rgb(148, 163, 184))
-                            .monospace(),
+                    if screen_resp.clicked() {
+                        self.player_state.is_playing = !self.player_state.is_playing;
+                    }
+
+                    let painter = ui.painter_at(screen_rect);
+                    painter.rect_filled(screen_rect, 8.0, Color32::from_rgb(4, 7, 13));
+
+                    // Thumbnail / Poster Frame
+                    let thumb_url =
+                        format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", watch.video_id);
+                    if let Some(tex) = self.thumbnail_cache.get_or_request(ui.ctx(), &thumb_url) {
+                        let uv =
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        painter.image(tex.id(), screen_rect, uv, Color32::WHITE);
+                    }
+
+                    // Top vignette gradient
+                    let top_vignette = egui::Rect::from_min_max(
+                        screen_rect.min,
+                        egui::pos2(screen_rect.max.x, screen_rect.min.y + 44.0),
                     );
-                });
-
-                ui.add_space(8.0);
-
-                ui.label(
-                    RichText::new(&watch.title)
-                        .size(18.0)
-                        .strong()
-                        .color(Color32::from_rgb(240, 246, 252)),
-                );
-
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&watch.author)
-                            .size(13.0)
-                            .color(Color32::from_rgb(56, 189, 248))
-                            .strong(),
+                    painter.rect_filled(
+                        top_vignette,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(0, 0, 0, 140),
                     );
 
-                    if !watch.views.is_empty() {
-                        ui.label(
-                            RichText::new(format!("- {} views", watch.views))
-                                .size(12.0)
-                                .color(Color32::from_rgb(148, 163, 184)),
+                    // Top Overlay: Status & Resolution Badge
+                    let (status_text, status_col) = if self.player_state.is_playing {
+                        ("[LIVE STREAMING]", Color32::from_rgb(239, 68, 68))
+                    } else {
+                        ("[PAUSED]", Color32::from_rgb(148, 163, 184))
+                    };
+                    painter.text(
+                        egui::pos2(screen_rect.min.x + 12.0, screen_rect.min.y + 12.0),
+                        egui::Align2::LEFT_TOP,
+                        status_text,
+                        egui::FontId::proportional(11.0),
+                        status_col,
+                    );
+                    painter.text(
+                        egui::pos2(screen_rect.max.x - 12.0, screen_rect.min.y + 12.0),
+                        egui::Align2::RIGHT_TOP,
+                        &self.player_state.quality,
+                        egui::FontId::monospace(10.5),
+                        Color32::from_rgb(56, 189, 248),
+                    );
+
+                    // Center Play/Pause Indicator (shows on hover or when paused)
+                    if screen_resp.hovered() || !self.player_state.is_playing {
+                        let center = screen_rect.center();
+                        painter.circle_filled(
+                            center,
+                            28.0,
+                            Color32::from_rgba_unmultiplied(15, 20, 31, 210),
+                        );
+                        let sym = if self.player_state.is_playing {
+                            "||"
+                        } else {
+                            ">"
+                        };
+                        painter.text(
+                            center,
+                            egui::Align2::CENTER_CENTER,
+                            sym,
+                            egui::FontId::proportional(22.0),
+                            Color32::from_rgb(56, 189, 248),
                         );
                     }
-                });
 
-                ui.add_space(10.0);
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(
-                            RichText::new("Watch External")
-                                .size(12.0)
-                                .color(Color32::WHITE)
-                                .strong(),
-                        )
-                        .clicked()
-                    {
-                        let target_url =
-                            format!("https://www.youtube.com/watch?v={}", watch.video_id);
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = std::process::Command::new("cmd")
-                                .args(["/C", "start", &target_url])
-                                .spawn();
-                        }
-                        #[cfg(not(target_os = "windows"))]
-                        {
-                            let _ = std::process::Command::new("xdg-open")
-                                .arg(&target_url)
-                                .spawn();
-                        }
+                    // Bottom Visualizer: Animated dynamic audio waveform
+                    let wave_y = screen_rect.max.y - 14.0;
+                    let num_bars = 28;
+                    let bar_w = (player_w - 24.0) / (num_bars as f32 * 1.5);
+                    for i in 0..num_bars {
+                        let bar_x = screen_rect.min.x + 12.0 + i as f32 * bar_w * 1.5;
+                        let height = if self.player_state.is_playing {
+                            let phase = self.player_state.waveform_phase + (i as f32) * 0.35;
+                            (phase.sin().abs() * 16.0 * self.player_state.volume + 3.0)
+                                .clamp(3.0, 24.0)
+                        } else {
+                            3.0
+                        };
+                        let bar_rect = egui::Rect::from_min_max(
+                            egui::pos2(bar_x, wave_y - height),
+                            egui::pos2(bar_x + bar_w, wave_y),
+                        );
+                        painter.rect_filled(
+                            bar_rect,
+                            1.5,
+                            Color32::from_rgba_unmultiplied(56, 189, 248, 180),
+                        );
                     }
 
-                    if ui
-                        .button(
-                            RichText::new("Copy Video URL")
-                                .size(11.5)
-                                .color(Color32::from_rgb(125, 211, 252)),
-                        )
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(format!(
-                            "https://www.youtube.com/watch?v={}",
-                            watch.video_id
-                        ));
-                    }
+                    ui.add_space(8.0);
 
-                    if ui
-                        .button(
-                            RichText::new("Copy Embed URL")
-                                .size(11.5)
-                                .color(Color32::from_rgb(125, 211, 252)),
-                        )
-                        .clicked()
-                    {
-                        ui.ctx()
-                            .copy_text(format!("https://www.youtube.com/embed/{}", watch.video_id));
-                    }
-                });
-
-                if !watch.description.is_empty() {
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Description:")
-                            .size(12.0)
-                            .color(Color32::from_rgb(148, 163, 184))
-                            .strong(),
+                    // 2. Interactive Scrubber Timeline
+                    let (timeline_rect, timeline_resp) = ui.allocate_exact_size(
+                        egui::vec2(player_w, 14.0),
+                        egui::Sense::click_and_drag(),
                     );
-                    ui.add_space(4.0);
-                    let desc = if watch.description.len() > 300 {
-                        format!("{}...", &watch.description[..297])
+                    let t_painter = ui.painter_at(timeline_rect);
+                    let bar_y = timeline_rect.center().y;
+                    let bar_track = egui::Rect::from_min_max(
+                        egui::pos2(timeline_rect.min.x, bar_y - 2.5),
+                        egui::pos2(timeline_rect.max.x, bar_y + 2.5),
+                    );
+                    t_painter.rect_filled(bar_track, 2.5, Color32::from_rgb(30, 41, 59));
+
+                    // Buffered indicator
+                    let buf_pct = ((self.player_state.current_time * 1.35 + 25.0)
+                        / self.player_state.duration)
+                        .clamp(0.0, 1.0);
+                    let buf_track = egui::Rect::from_min_max(
+                        egui::pos2(timeline_rect.min.x, bar_y - 2.5),
+                        egui::pos2(timeline_rect.min.x + player_w * buf_pct, bar_y + 2.5),
+                    );
+                    t_painter.rect_filled(buf_track, 2.5, Color32::from_rgb(51, 65, 85));
+
+                    // Played progress indicator
+                    let play_pct = (self.player_state.current_time / self.player_state.duration)
+                        .clamp(0.0, 1.0);
+                    let played_track = egui::Rect::from_min_max(
+                        egui::pos2(timeline_rect.min.x, bar_y - 2.5),
+                        egui::pos2(timeline_rect.min.x + player_w * play_pct, bar_y + 2.5),
+                    );
+                    t_painter.rect_filled(played_track, 2.5, Color32::from_rgb(56, 189, 248));
+
+                    // Scrubber thumb
+                    let thumb_x = timeline_rect.min.x + player_w * play_pct;
+                    let thumb_r = if timeline_resp.hovered() || timeline_resp.dragged() {
+                        6.0
                     } else {
-                        watch.description.clone()
+                        4.5
                     };
+                    t_painter.circle_filled(egui::pos2(thumb_x, bar_y), thumb_r, Color32::WHITE);
+
+                    // Scrubber seek interaction
+                    if timeline_resp.clicked() || timeline_resp.dragged() {
+                        if let Some(pos) = timeline_resp.interact_pointer_pos() {
+                            let click_pct =
+                                ((pos.x - timeline_rect.min.x) / player_w).clamp(0.0, 1.0);
+                            self.player_state.current_time = click_pct * self.player_state.duration;
+                        }
+                    }
+
+                    // Hover timecode tooltip
+                    if timeline_resp.hovered() {
+                        if let Some(pos) = timeline_resp.hover_pos() {
+                            let hover_pct =
+                                ((pos.x - timeline_rect.min.x) / player_w).clamp(0.0, 1.0);
+                            let hover_secs = hover_pct * self.player_state.duration;
+                            timeline_resp.show_tooltip_text(format_duration_clock(hover_secs));
+                        }
+                    }
+
+                    ui.add_space(4.0);
+
+                    // 3. Media Controls Bar
+                    Frame::NONE
+                        .fill(Color32::from_rgb(15, 20, 31))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // Play / Pause
+                                let play_label = if self.player_state.is_playing {
+                                    "Pause"
+                                } else {
+                                    "Play"
+                                };
+                                if ui
+                                    .button(
+                                        RichText::new(play_label)
+                                            .size(12.0)
+                                            .color(Color32::from_rgb(56, 189, 248))
+                                            .strong(),
+                                    )
+                                    .clicked()
+                                {
+                                    self.player_state.is_playing = !self.player_state.is_playing;
+                                }
+
+                                // Rewind 10s
+                                if ui.small_button("-10s").clicked() {
+                                    self.player_state.current_time =
+                                        (self.player_state.current_time - 10.0).max(0.0);
+                                }
+
+                                // Forward 10s
+                                if ui.small_button("+10s").clicked() {
+                                    self.player_state.current_time =
+                                        (self.player_state.current_time + 10.0)
+                                            .min(self.player_state.duration);
+                                }
+
+                                ui.add_space(6.0);
+
+                                // Time Clock
+                                let cur_clock =
+                                    format_duration_clock(self.player_state.current_time);
+                                let total_clock = format_duration_clock(self.player_state.duration);
+                                ui.label(
+                                    RichText::new(format!("{} / {}", cur_clock, total_clock))
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(203, 213, 225))
+                                        .monospace(),
+                                );
+
+                                // Right Controls
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Theater Mode Toggle
+                                        let th_label = if self.player_state.theater_mode {
+                                            "Standard"
+                                        } else {
+                                            "Theater"
+                                        };
+                                        if ui.button(RichText::new(th_label).size(11.0)).clicked() {
+                                            self.player_state.theater_mode =
+                                                !self.player_state.theater_mode;
+                                        }
+
+                                        // Speed Selector
+                                        let spd_text = format!("{:.2}x", self.player_state.speed);
+                                        if ui
+                                            .button(
+                                                RichText::new(spd_text)
+                                                    .size(11.0)
+                                                    .color(Color32::from_rgb(125, 211, 252)),
+                                            )
+                                            .on_hover_text("Playback Speed (Click to cycle)")
+                                            .clicked()
+                                        {
+                                            self.player_state.speed =
+                                                match (self.player_state.speed * 10.0) as i32 {
+                                                    10 => 1.25,
+                                                    12 | 13 => 1.5,
+                                                    15 => 2.0,
+                                                    20 => 0.5,
+                                                    _ => 1.0,
+                                                };
+                                        }
+
+                                        // Volume Toggle
+                                        let vol_label = if self.player_state.is_muted {
+                                            "Muted".to_string()
+                                        } else {
+                                            format!("Vol: {:.0}%", self.player_state.volume * 100.0)
+                                        };
+                                        if ui.button(RichText::new(vol_label).size(11.0)).clicked()
+                                        {
+                                            self.player_state.is_muted =
+                                                !self.player_state.is_muted;
+                                        }
+
+                                        // External pop-out option
+                                        if ui
+                                            .small_button("External")
+                                            .on_hover_text("Open in External App")
+                                            .clicked()
+                                        {
+                                            let target_url = format!(
+                                                "https://www.youtube.com/watch?v={}",
+                                                watch.video_id
+                                            );
+                                            #[cfg(target_os = "windows")]
+                                            {
+                                                let _ = std::process::Command::new("cmd")
+                                                    .args(["/C", "start", &target_url])
+                                                    .spawn();
+                                            }
+                                            #[cfg(not(target_os = "windows"))]
+                                            {
+                                                let _ = std::process::Command::new("xdg-open")
+                                                    .arg(&target_url)
+                                                    .spawn();
+                                            }
+                                        }
+
+                                        if ui.small_button("Copy URL").clicked() {
+                                            ui.ctx().copy_text(format!(
+                                                "https://www.youtube.com/watch?v={}",
+                                                watch.video_id
+                                            ));
+                                        }
+                                    },
+                                );
+                            });
+                        });
+
+                    ui.add_space(10.0);
+
+                    // 4. Video Details Section
                     ui.label(
-                        RichText::new(desc)
-                            .size(11.5)
-                            .color(Color32::from_rgb(203, 213, 225)),
+                        RichText::new(&watch.title)
+                            .size(17.0)
+                            .strong()
+                            .color(Color32::from_rgb(241, 245, 249)),
                     );
-                }
+
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(&watch.author)
+                                .size(13.0)
+                                .color(Color32::from_rgb(56, 189, 248))
+                                .strong(),
+                        );
+
+                        Frame::NONE
+                            .fill(Color32::from_rgb(20, 27, 42))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74)))
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .inner_margin(Margin::symmetric(5, 1))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("VERIFIED")
+                                        .size(9.5)
+                                        .color(Color32::from_rgb(148, 163, 184))
+                                        .strong(),
+                                );
+                            });
+
+                        if !watch.views.is_empty() {
+                            ui.label(
+                                RichText::new(format!("- {} views", watch.views))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                        }
+                    });
+
+                    // Collapsible Description
+                    if !watch.description.is_empty() {
+                        ui.add_space(8.0);
+                        let is_expanded = self.player_state.description_expanded;
+                        let toggle_lbl = if is_expanded {
+                            "Hide description"
+                        } else {
+                            "Show description"
+                        };
+                        if ui
+                            .link(
+                                RichText::new(toggle_lbl)
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(125, 211, 252)),
+                            )
+                            .clicked()
+                        {
+                            self.player_state.description_expanded = !is_expanded;
+                        }
+
+                        if self.player_state.description_expanded {
+                            ui.add_space(4.0);
+                            Frame::NONE
+                                .fill(Color32::from_rgb(15, 20, 31))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(Margin::same(10))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(&watch.description)
+                                            .size(11.5)
+                                            .color(Color32::from_rgb(203, 213, 225)),
+                                    );
+                                });
+                        }
+                    }
+
+                    // 5. Up Next / Recommendations Carousel
+                    if !videos.is_empty() {
+                        ui.add_space(14.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("Up Next Videos")
+                                .size(14.0)
+                                .strong()
+                                .color(Color32::from_rgb(241, 245, 249)),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.horizontal(|ui| {
+                            let col_w = (player_w - 14.0) / 2.0;
+                            ui.vertical(|col_ui| {
+                                col_ui.set_width(col_w);
+                                for video in videos
+                                    .iter()
+                                    .filter(|v| v.id != watch.video_id)
+                                    .step_by(2)
+                                    .take(4)
+                                {
+                                    self.render_video_card(col_ui, video, action);
+                                    col_ui.add_space(10.0);
+                                }
+                            });
+                            ui.add_space(10.0);
+                            ui.vertical(|col_ui| {
+                                col_ui.set_width(col_w);
+                                for video in videos
+                                    .iter()
+                                    .filter(|v| v.id != watch.video_id)
+                                    .skip(1)
+                                    .step_by(2)
+                                    .take(4)
+                                {
+                                    self.render_video_card(col_ui, video, action);
+                                    col_ui.add_space(10.0);
+                                }
+                            });
+                        });
+                    }
+                });
             });
     }
 }
@@ -2659,6 +3351,40 @@ pub fn extract_youtube_videos(html: &str) -> Vec<YouTubeVideoItem> {
     }
 
     videos
+}
+
+pub fn extract_video_id_from_url(url: &str) -> Option<String> {
+    if let Some(pos) = url.find("v=") {
+        let after = &url[pos + 2..];
+        let end = after.find('&').unwrap_or(after.len());
+        let id = &after[..end];
+        if !id.is_empty() && id.len() <= 16 {
+            return Some(id.to_string());
+        }
+    }
+    if let Some(pos) = url.find("youtu.be/") {
+        let after = &url[pos + 9..];
+        let end = after
+            .find('?')
+            .or_else(|| after.find('&'))
+            .unwrap_or(after.len());
+        let id = &after[..end];
+        if !id.is_empty() && id.len() <= 16 {
+            return Some(id.to_string());
+        }
+    }
+    if let Some(pos) = url.find("/embed/") {
+        let after = &url[pos + 7..];
+        let end = after
+            .find('?')
+            .or_else(|| after.find('&'))
+            .unwrap_or(after.len());
+        let id = &after[..end];
+        if !id.is_empty() && id.len() <= 16 {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
 pub fn extract_youtube_watch_details(html: &str) -> Option<YouTubeWatchDetails> {

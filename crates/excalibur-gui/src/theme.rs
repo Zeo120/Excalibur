@@ -39,40 +39,40 @@ pub fn configure_fonts(ctx: &egui::Context) {
 pub fn apply_cyber_theme(ctx: &egui::Context) {
     let mut visuals = Visuals::dark();
 
-    // Deep Obsidian Black & Rich Midnight Navy backgrounds
-    visuals.panel_fill = Color32::from_rgb(6, 9, 15); // Deep Obsidian Black (Top chrome, sidebars, status bar)
-    visuals.window_fill = Color32::from_rgb(10, 15, 26); // Midnight Navy Card Fill
-    visuals.extreme_bg_color = Color32::from_rgb(3, 5, 8); // Absolute Pitch Black (Code & terminal viewports)
+    // Elegant Minimalist Obsidian & Slate palette
+    visuals.panel_fill = Color32::from_rgb(11, 15, 23); // Primary panels, toolbars, sidebars
+    visuals.window_fill = Color32::from_rgb(15, 20, 31); // Elevated cards and modal surfaces
+    visuals.extreme_bg_color = Color32::from_rgb(7, 10, 16); // Deep viewport / code canvas
 
-    // Widgets styling: Deep Black & Electric Cobalt / Cyan palette
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(10, 15, 26);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(26, 43, 76));
+    // Refined subtle borders (1px) with crisp contrast
+    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(15, 20, 31);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
     visuals.widgets.noninteractive.fg_stroke =
-        Stroke::new(1.0_f32, Color32::from_rgb(201, 215, 235));
+        Stroke::new(1.0_f32, Color32::from_rgb(226, 232, 240));
     visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(14, 22, 38);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 52, 92));
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(215, 228, 245));
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(20, 27, 42);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74));
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225));
     visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(24, 46, 84);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.5_f32, Color32::from_rgb(56, 189, 248));
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(28, 38, 59);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.active.bg_fill = Color32::from_rgb(31, 111, 235);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+    visuals.widgets.active.bg_fill = Color32::from_rgb(37, 99, 235);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250));
     visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.open.bg_fill = Color32::from_rgb(20, 36, 66);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.5_f32, Color32::from_rgb(56, 189, 248));
+    visuals.widgets.open.bg_fill = Color32::from_rgb(24, 33, 51);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.selection.bg_fill = Color32::from_rgb(25, 75, 165);
-    visuals.selection.stroke = Stroke::new(1.5_f32, Color32::from_rgb(56, 189, 248));
+    visuals.selection.bg_fill = Color32::from_rgb(30, 58, 138);
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
 
     visuals.window_corner_radius = egui::CornerRadius::same(8);
     visuals.menu_corner_radius = egui::CornerRadius::same(6);
@@ -80,9 +80,9 @@ pub fn apply_cyber_theme(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.window_margin = egui::Margin::same(10);
+    style.spacing.item_spacing = egui::vec2(6.0, 5.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.window_margin = egui::Margin::same(8);
 
     // Modern typography hierarchy with crisp font metrics
     style.text_styles = [
