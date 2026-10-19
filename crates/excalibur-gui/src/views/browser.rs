@@ -219,6 +219,84 @@ fn parse_duration_seconds(d_str: &str) -> f32 {
     }
 }
 
+/// Asynchronous audio stream loader leveraging Excalibur's resilient HTTP client.
+pub struct AudioStreamLoader {
+    pending: HashSet<String>,
+    loaded: HashSet<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<(String, Vec<u8>)>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>,
+    http_client: Arc<excalibur_core::HttpClient>,
+}
+
+impl Default for AudioStreamLoader {
+    fn default() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = excalibur_core::HttpClient::new(excalibur_core::ClientOptions::default())
+            .unwrap_or_else(|_| {
+                excalibur_core::HttpClient::new(excalibur_core::ClientOptions {
+                    bypass_tls_verification: true,
+                    timeout_seconds: 15,
+                    ..Default::default()
+                })
+                .expect("Failed to initialize HttpClient fallback")
+            });
+        Self {
+            pending: HashSet::new(),
+            loaded: HashSet::new(),
+            tx,
+            rx,
+            http_client: Arc::new(client),
+        }
+    }
+}
+
+impl AudioStreamLoader {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn poll_incoming(&mut self, audio_engine: &mut crate::audio::AudioEngine) {
+        while let Ok((id, bytes)) = self.rx.try_recv() {
+            self.pending.remove(&id);
+            if let Err(e) = audio_engine.load_audio_bytes(&id, &bytes) {
+                tracing::debug!("Audio stream decode failed for {}: {}", id, e);
+            } else {
+                self.loaded.insert(id);
+                tracing::info!("Audio stream loaded successfully");
+            }
+        }
+    }
+
+    pub fn request_stream(&mut self, id: &str, stream_url: &str) {
+        let clean_id = id.trim().to_string();
+        let clean_url = stream_url.trim().to_string();
+        if clean_id.is_empty()
+            || clean_url.is_empty()
+            || self.loaded.contains(&clean_id)
+            || self.pending.contains(&clean_id)
+        {
+            return;
+        }
+
+        self.pending.insert(clean_id.clone());
+        let client = self.http_client.clone();
+        let tx = self.tx.clone();
+
+        tokio::spawn(async move {
+            let mut req = excalibur_core::HttpRequest::new("GET", &clean_url);
+            req.headers.append(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Excalibur/1.0",
+            );
+            if let Ok(resp) = client.dispatch(&req).await {
+                if (200..300).contains(&resp.status) && !resp.body.is_empty() {
+                    let _ = tx.send((clean_id, resp.body));
+                }
+            }
+        });
+    }
+}
+
 /// Visual browser viewport rendering DOM nodes into interactive GUI elements.
 pub struct BrowserRenderer {
     pub input_states: HashMap<String, String>,
@@ -232,6 +310,8 @@ pub struct BrowserRenderer {
     pub find_query: String,
     pub thumbnail_cache: ThumbnailCache,
     pub player_state: VideoPlayerState,
+    pub audio_engine: crate::audio::AudioEngine,
+    pub audio_stream_loader: AudioStreamLoader,
 }
 
 impl Default for BrowserRenderer {
@@ -248,6 +328,8 @@ impl Default for BrowserRenderer {
             find_query: String::new(),
             thumbnail_cache: ThumbnailCache::new(),
             player_state: VideoPlayerState::default(),
+            audio_engine: crate::audio::AudioEngine::new(),
+            audio_stream_loader: AudioStreamLoader::new(),
         }
     }
 }
@@ -312,6 +394,13 @@ impl BrowserRenderer {
             return action;
         }
 
+        // Direct media stream check (.mp3, .wav, .ogg, .flac, .mp4, .webm)
+        let is_direct_audio = url.ends_with(".mp3")
+            || url.ends_with(".wav")
+            || url.ends_with(".ogg")
+            || url.ends_with(".flac");
+        let is_direct_video = url.ends_with(".mp4") || url.ends_with(".webm");
+
         // YouTube SPA client fallback: render interactive YouTube hub
         let is_youtube = url.contains("youtube.com")
             || url.contains("youtu.be")
@@ -330,8 +419,34 @@ impl BrowserRenderer {
                     });
                 }
             }
+            if let Some(details) = watch_details.as_ref() {
+                if let Some(audio_url) = extract_youtube_audio_url(raw_html) {
+                    self.audio_stream_loader
+                        .request_stream(&details.video_id, &audio_url);
+                }
+            }
+            self.audio_stream_loader
+                .poll_incoming(&mut self.audio_engine);
             let videos = extract_youtube_videos(raw_html);
             self.render_youtube_hub(ui, url, watch_details.as_ref(), &videos, &mut action);
+            return action;
+        } else if is_direct_audio || is_direct_video {
+            let title = url
+                .split('/')
+                .next_back()
+                .unwrap_or("Media Stream")
+                .to_string();
+            let details = YouTubeWatchDetails {
+                video_id: url.to_string(),
+                title,
+                author: "Direct Media Stream".to_string(),
+                views: "Hardware Audio Output".to_string(),
+                description: format!("In-browser hardware-accelerated playback for {}.", url),
+            };
+            self.audio_stream_loader.request_stream(url, url);
+            self.audio_stream_loader
+                .poll_incoming(&mut self.audio_engine);
+            self.render_youtube_hub(ui, url, Some(&details), &[], &mut action);
             return action;
         }
 
@@ -2030,7 +2145,8 @@ impl BrowserRenderer {
                             ui.add_space(4.0);
                         }
                     }
-                    "video" => {
+                    "video" | "audio" => {
+                        let is_audio = tag == "audio";
                         let src = attributes
                             .get("src")
                             .or_else(|| attributes.get("data-src"))
@@ -2054,82 +2170,152 @@ impl BrowserRenderer {
                             s
                         };
 
+                        if !resolved_src.is_empty() {
+                            self.audio_stream_loader
+                                .request_stream(&resolved_src, &resolved_src);
+                        }
+                        self.audio_stream_loader
+                            .poll_incoming(&mut self.audio_engine);
+
                         ui.add_space(6.0);
                         let player_w = ui.available_width().min(840.0);
-                        let player_h = (player_w * 9.0 / 16.0).clamp(200.0, 460.0);
+                        let player_h = if is_audio {
+                            60.0
+                        } else {
+                            (player_w * 9.0 / 16.0).clamp(200.0, 460.0)
+                        };
 
                         Frame::NONE
-                            .fill(Color32::from_rgb(11, 15, 23))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                            .fill(Color32::from_rgb(32, 33, 36))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
                             .corner_radius(egui::CornerRadius::same(8))
                             .inner_margin(Margin::same(10))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
-                                    let (rect, resp) = ui.allocate_exact_size(
-                                        egui::vec2(player_w - 20.0, player_h - 50.0),
-                                        egui::Sense::click(),
-                                    );
-                                    if resp.clicked() {
-                                        self.player_state.is_playing =
-                                            !self.player_state.is_playing;
-                                    }
-
-                                    let painter = ui.painter_at(rect);
-                                    painter.rect_filled(rect, 6.0, Color32::from_rgb(4, 7, 13));
-
-                                    if !poster.is_empty() {
-                                        let resolved_poster = self.resolve_url(current_url, poster);
-                                        if let Some(tex) = self
-                                            .thumbnail_cache
-                                            .get_or_request(ui.ctx(), &resolved_poster)
-                                        {
-                                            let uv = egui::Rect::from_min_max(
-                                                egui::pos2(0.0, 0.0),
-                                                egui::pos2(1.0, 1.0),
-                                            );
-                                            painter.image(tex.id(), rect, uv, Color32::WHITE);
-                                        }
-                                    }
-
-                                    let center = rect.center();
-                                    let sym = if self.player_state.is_playing {
-                                        "||"
-                                    } else {
-                                        ">"
-                                    };
-                                    painter.circle_filled(
-                                        center,
-                                        24.0,
-                                        Color32::from_rgba_unmultiplied(15, 20, 31, 200),
-                                    );
-                                    painter.text(
-                                        center,
-                                        egui::Align2::CENTER_CENTER,
-                                        sym,
-                                        egui::FontId::proportional(20.0),
-                                        Color32::from_rgb(56, 189, 248),
-                                    );
-
-                                    ui.add_space(6.0);
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .button(if self.player_state.is_playing {
-                                                "Pause"
+                                    if !is_audio {
+                                        let (rect, resp) = ui.allocate_exact_size(
+                                            egui::vec2(player_w - 20.0, player_h - 50.0),
+                                            egui::Sense::click(),
+                                        );
+                                        if resp.clicked() {
+                                            self.player_state.is_playing =
+                                                !self.player_state.is_playing;
+                                            if self.player_state.is_playing {
+                                                self.audio_engine
+                                                    .ensure_playback(&resolved_src, true);
+                                                self.audio_engine.play();
                                             } else {
-                                                "Play"
-                                            })
+                                                self.audio_engine.pause();
+                                            }
+                                        }
+
+                                        let painter = ui.painter_at(rect);
+                                        painter.rect_filled(rect, 6.0, Color32::from_rgb(0, 0, 0));
+
+                                        if !poster.is_empty() {
+                                            let resolved_poster =
+                                                self.resolve_url(current_url, poster);
+                                            if let Some(tex) = self
+                                                .thumbnail_cache
+                                                .get_or_request(ui.ctx(), &resolved_poster)
+                                            {
+                                                let uv = egui::Rect::from_min_max(
+                                                    egui::pos2(0.0, 0.0),
+                                                    egui::pos2(1.0, 1.0),
+                                                );
+                                                painter.image(tex.id(), rect, uv, Color32::WHITE);
+                                            }
+                                        }
+
+                                        let center = rect.center();
+                                        let sym = if self.player_state.is_playing {
+                                            "||"
+                                        } else {
+                                            ">"
+                                        };
+                                        painter.circle_filled(
+                                            center,
+                                            24.0,
+                                            Color32::from_rgba_unmultiplied(40, 42, 45, 220),
+                                        );
+                                        painter.text(
+                                            center,
+                                            egui::Align2::CENTER_CENTER,
+                                            sym,
+                                            egui::FontId::proportional(20.0),
+                                            Color32::from_rgb(241, 243, 244),
+                                        );
+                                    }
+
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        let play_label = if self.player_state.is_playing {
+                                            "Pause"
+                                        } else {
+                                            "Play"
+                                        };
+                                        if ui
+                                            .button(
+                                                RichText::new(play_label)
+                                                    .color(Color32::from_rgb(138, 180, 248))
+                                                    .strong(),
+                                            )
                                             .clicked()
                                         {
                                             self.player_state.is_playing =
                                                 !self.player_state.is_playing;
+                                            if self.player_state.is_playing {
+                                                self.audio_engine
+                                                    .ensure_playback(&resolved_src, true);
+                                                self.audio_engine.play();
+                                            } else {
+                                                self.audio_engine.pause();
+                                            }
                                         }
+
+                                        let mode_desc = if is_audio {
+                                            "HTML5 Audio"
+                                        } else {
+                                            "HTML5 Video"
+                                        };
                                         ui.label(
-                                            RichText::new("In-Browser Media Player")
+                                            RichText::new(mode_desc)
                                                 .size(11.0)
-                                                .color(Color32::from_rgb(148, 163, 184)),
+                                                .color(Color32::from_rgb(154, 160, 166)),
                                         );
+
+                                        // Volume control
+                                        let vol_label = if self.player_state.is_muted {
+                                            "Muted"
+                                        } else {
+                                            "Vol"
+                                        };
+                                        if ui.small_button(vol_label).clicked() {
+                                            self.player_state.is_muted =
+                                                !self.player_state.is_muted;
+                                            self.audio_engine.set_muted(self.player_state.is_muted);
+                                        }
+
+                                        let vol_slider = ui.add_sized(
+                                            [60.0, 18.0],
+                                            egui::Slider::new(
+                                                &mut self.player_state.volume,
+                                                0.0..=1.0,
+                                            )
+                                            .show_value(false),
+                                        );
+                                        if vol_slider.changed() {
+                                            if self.player_state.is_muted
+                                                && self.player_state.volume > 0.0
+                                            {
+                                                self.player_state.is_muted = false;
+                                            }
+                                            self.audio_engine.set_volume(self.player_state.volume);
+                                            self.audio_engine.set_muted(self.player_state.is_muted);
+                                        }
+
                                         if !resolved_src.is_empty()
-                                            && ui.button("Copy Stream URL").clicked()
+                                            && ui.small_button("Copy Stream URL").clicked()
                                         {
                                             ui.ctx().copy_text(resolved_src.clone());
                                         }
@@ -2915,10 +3101,20 @@ impl BrowserRenderer {
             } else {
                 self.player_state.duration = 214.0;
             }
+            self.audio_engine.start_synth_track(&watch.video_id);
         }
 
         // Progress playback tick
         self.player_state.update_playback(ui.ctx());
+
+        // Sync audio engine playback, volume, and incoming streams
+        self.audio_stream_loader
+            .poll_incoming(&mut self.audio_engine);
+        self.audio_engine
+            .ensure_playback(&watch.video_id, self.player_state.is_playing);
+        self.audio_engine.set_volume(self.player_state.volume);
+        self.audio_engine.set_muted(self.player_state.is_muted);
+        self.audio_engine.set_speed(self.player_state.speed);
 
         let available_w = ui.available_width();
         let player_w = if self.player_state.theater_mode {
@@ -2942,6 +3138,11 @@ impl BrowserRenderer {
 
                     if screen_resp.clicked() {
                         self.player_state.is_playing = !self.player_state.is_playing;
+                        if self.player_state.is_playing {
+                            self.audio_engine.play();
+                        } else {
+                            self.audio_engine.pause();
+                        }
                     }
 
                     let painter = ui.painter_at(screen_rect);
@@ -3122,6 +3323,11 @@ impl BrowserRenderer {
                                     .clicked()
                                 {
                                     self.player_state.is_playing = !self.player_state.is_playing;
+                                    if self.player_state.is_playing {
+                                        self.audio_engine.play();
+                                    } else {
+                                        self.audio_engine.pause();
+                                    }
                                 }
 
                                 // Rewind 10s
@@ -3184,19 +3390,58 @@ impl BrowserRenderer {
                                                     20 => 0.5,
                                                     _ => 1.0,
                                                 };
+                                            self.audio_engine.set_speed(self.player_state.speed);
                                         }
 
-                                        // Volume Toggle
+                                        // Volume Toggle and Interactive Slider
                                         let vol_label = if self.player_state.is_muted {
-                                            "Muted".to_string()
+                                            "Muted"
+                                        } else if self.player_state.volume == 0.0 {
+                                            "Silent"
                                         } else {
-                                            format!("Vol: {:.0}%", self.player_state.volume * 100.0)
+                                            "Vol"
                                         };
                                         if ui.button(RichText::new(vol_label).size(11.0)).clicked()
                                         {
                                             self.player_state.is_muted =
                                                 !self.player_state.is_muted;
+                                            self.audio_engine.set_muted(self.player_state.is_muted);
                                         }
+
+                                        let prev_vol = self.player_state.volume;
+                                        let vol_slider = ui.add_sized(
+                                            [65.0, 18.0],
+                                            egui::Slider::new(
+                                                &mut self.player_state.volume,
+                                                0.0..=1.0,
+                                            )
+                                            .show_value(false),
+                                        );
+                                        if vol_slider.changed()
+                                            || (self.player_state.volume - prev_vol).abs() > 0.001
+                                        {
+                                            if self.player_state.is_muted
+                                                && self.player_state.volume > 0.0
+                                            {
+                                                self.player_state.is_muted = false;
+                                            }
+                                            self.audio_engine.set_volume(self.player_state.volume);
+                                            self.audio_engine.set_muted(self.player_state.is_muted);
+                                        }
+
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{:.0}%",
+                                                if self.player_state.is_muted {
+                                                    0.0
+                                                } else {
+                                                    self.player_state.volume * 100.0
+                                                }
+                                            ))
+                                            .size(10.5)
+                                            .color(Color32::from_rgb(154, 160, 166))
+                                            .monospace(),
+                                        );
 
                                         // External pop-out option
                                         if ui
@@ -3689,6 +3934,62 @@ fn find_video_details_in_json(val: &serde_json::Value) -> Option<YouTubeWatchDet
         serde_json::Value::Array(arr) => {
             for child in arr {
                 if let Some(res) = find_video_details_in_json(child) {
+                    return Some(res);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+pub fn extract_youtube_audio_url(html: &str) -> Option<String> {
+    if let Some(start_idx) = html.find("ytInitialPlayerResponse") {
+        let slice = &html[start_idx..];
+        if let Some(eq_idx) = slice.find('=') {
+            if let Some(brace_idx) = slice[eq_idx..].find('{') {
+                let json_slice = &slice[eq_idx + brace_idx..];
+                let de = serde_json::Deserializer::from_str(json_slice);
+                if let Some(Ok(val)) = de.into_iter::<serde_json::Value>().next() {
+                    if let Some(url) = find_audio_url_in_json(&val) {
+                        return Some(url);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_audio_url_in_json(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::Object(map) => {
+            if let Some(streaming_data) = map.get("streamingData").and_then(|v| v.as_object()) {
+                if let Some(formats) = streaming_data
+                    .get("adaptiveFormats")
+                    .and_then(|v| v.as_array())
+                {
+                    for fmt in formats {
+                        let mime = fmt.get("mimeType").and_then(|v| v.as_str()).unwrap_or("");
+                        if mime.starts_with("audio/") {
+                            if let Some(url) = fmt.get("url").and_then(|v| v.as_str()) {
+                                if !url.is_empty() {
+                                    return Some(url.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values() {
+                if let Some(res) = find_audio_url_in_json(child) {
+                    return Some(res);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for child in arr {
+                if let Some(res) = find_audio_url_in_json(child) {
                     return Some(res);
                 }
             }
