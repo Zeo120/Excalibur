@@ -14,6 +14,9 @@ pub enum CoreError {
     #[error("HTTP error: {0}")]
     Http(String),
 
+    #[error("Request timed out after {0:?}")]
+    Timeout(std::time::Duration),
+
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 

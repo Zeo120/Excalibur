@@ -6,7 +6,7 @@ use hyper::body::Bytes;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_rustls::TlsConnector;
 use url::Url;
 
@@ -27,12 +27,23 @@ impl HttpSender {
     }
 }
 
+/// Aborts the spawned hyper connection task when dropped, so a request that is
+/// cancelled or times out actually closes its socket instead of being detached.
+struct ConnectionGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Configuration options for the HTTP/HTTPS client.
 #[derive(Debug, Clone)]
 pub struct ClientOptions {
     pub bypass_tls_verification: bool,
     pub ja3_preset: Ja3Preset,
     pub upstream_proxy: Option<String>,
+    /// Deadline for a whole request: connect, TLS, send, response body and redirects.
     pub timeout_seconds: u64,
 }
 
@@ -67,13 +78,28 @@ impl HttpClient {
         })
     }
 
+    fn deadline(&self) -> Duration {
+        Duration::from_secs(self.options.timeout_seconds.max(1))
+    }
+
     /// Dispatches an HttpRequest and follows HTTP redirects.
+    ///
+    /// The whole exchange, including every redirect hop, must finish within
+    /// `timeout_seconds`; otherwise all in-flight I/O is dropped and
+    /// [`CoreError::Timeout`] is returned.
     pub async fn dispatch(&self, req: &HttpRequest) -> Result<HttpResponse> {
+        let limit = self.deadline();
+        tokio::time::timeout(limit, self.dispatch_following_redirects(req))
+            .await
+            .map_err(|_| CoreError::Timeout(limit))?
+    }
+
+    async fn dispatch_following_redirects(&self, req: &HttpRequest) -> Result<HttpResponse> {
         let mut current_req = req.clone();
         let mut redirects_left = 5;
 
         loop {
-            let res = self.dispatch_single(&current_req).await?;
+            let res = self.dispatch_once(&current_req).await?;
             if (res.status == 301
                 || res.status == 302
                 || res.status == 303
@@ -97,8 +123,16 @@ impl HttpClient {
         }
     }
 
-    /// Dispatches a single HttpRequest without following redirects.
+    /// Dispatches a single HttpRequest without following redirects, bounded by
+    /// `timeout_seconds`.
     pub async fn dispatch_single(&self, req: &HttpRequest) -> Result<HttpResponse> {
+        let limit = self.deadline();
+        tokio::time::timeout(limit, self.dispatch_once(req))
+            .await
+            .map_err(|_| CoreError::Timeout(limit))?
+    }
+
+    async fn dispatch_once(&self, req: &HttpRequest) -> Result<HttpResponse> {
         let parsed_url = Url::parse(&req.url)?;
         let scheme = parsed_url.scheme();
         let host = parsed_url
@@ -165,7 +199,8 @@ impl HttpClient {
 
         let is_https = scheme == "https";
 
-        let (mut sender, conn_handle, is_h2) = if is_https {
+        // `_conn_guard` lives until this function returns or its future is dropped.
+        let (mut sender, _conn_guard, is_h2) = if is_https {
             let server_name = ServerName::try_from(host.to_string())
                 .map_err(|e| CoreError::Tls(format!("Invalid server name: {}", e)))?;
 
@@ -184,22 +219,22 @@ impl HttpClient {
                         .await
                         .map_err(|e| CoreError::Http(format!("HTTP/2 handshake failed: {}", e)))?;
 
-                let handle = tokio::spawn(async move {
+                let handle = ConnectionGuard(tokio::spawn(async move {
                     if let Err(err) = conn.await {
                         tracing::debug!("HTTP/2 connection closed: {:?}", err);
                     }
-                });
+                }));
                 (HttpSender::Http2(sender), handle, true)
             } else {
                 let (sender, conn) = hyper::client::conn::http1::handshake(io)
                     .await
                     .map_err(|e| CoreError::Http(format!("HTTP/1.1 handshake failed: {}", e)))?;
 
-                let handle = tokio::spawn(async move {
+                let handle = ConnectionGuard(tokio::spawn(async move {
                     if let Err(err) = conn.await {
                         tracing::debug!("HTTP/1.1 connection closed: {:?}", err);
                     }
-                });
+                }));
                 (HttpSender::Http1(sender), handle, false)
             }
         } else {
@@ -208,11 +243,11 @@ impl HttpClient {
                 .await
                 .map_err(|e| CoreError::Http(format!("HTTP/1.1 handshake failed: {}", e)))?;
 
-            let handle = tokio::spawn(async move {
+            let handle = ConnectionGuard(tokio::spawn(async move {
                 if let Err(err) = conn.await {
                     tracing::debug!("HTTP/1.1 connection closed: {:?}", err);
                 }
-            });
+            }));
             (HttpSender::Http1(sender), handle, false)
         };
 
@@ -278,8 +313,6 @@ impl HttpClient {
             .map_err(|e| CoreError::Http(format!("Failed to read response body: {}", e)))?
             .to_bytes()
             .to_vec();
-
-        drop(conn_handle);
 
         Ok(HttpResponse {
             request_id: req.id.clone(),
