@@ -3,5 +3,5 @@
 pub mod js;
 pub mod lua;
 
-pub use js::JsRuntime;
+pub use js::{ExecutionLimits, JsCancelHandle, JsInterrupt, JsRuntime, SinkFinding};
 pub use lua::LuaRuntime;

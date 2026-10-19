@@ -19,7 +19,7 @@ use excalibur_core::{
     storage::{BrowserBookmarkEntry, OmniboxMatch, WorkspaceStorage},
 };
 use excalibur_dom::{DomNode, HtmlParser};
-use excalibur_script::JsRuntime;
+use excalibur_script::{ExecutionLimits, JsCancelHandle, JsRuntime, SinkFinding};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
@@ -406,29 +406,39 @@ impl GuiApp {
                             });
                         }
 
-                        // DOM XSS Sink tracking via QuickJS
-                        if let Ok(js) = JsRuntime::new() {
-                            let _ = js.set_url(&target_url);
-                            for script in dom.find_by_tag("script") {
-                                let code = script.text_content();
-                                if !code.trim().is_empty() {
-                                    let _ = js.eval(code.trim());
-                                }
-                            }
-                            for sink in js.get_sink_findings() {
-                                findings.push(GuiFindingItem {
-                                    rule_id: "SEC-DOM-XSS-SINK".into(),
-                                    severity: "HIGH".into(),
-                                    title: format!("DOM XSS Sink Called: {}", sink.sink_name),
-                                    description: format!(
-                                        "A dangerous sink function was called with client payload: {}",
-                                        sink.argument
-                                    ),
-                                    recommendation: "Sanitize user inputs before passing to eval(), innerHTML, or document.write().".into(),
-                                    evidence: sink.argument,
-                                    curl_command: format!("curl -i '{}'", target_url),
-                                });
-                            }
+                        // DOM XSS sink tracing runs on a blocking thread under
+                        // QuickJS time/memory limits so page scripts can't stall
+                        // the async runtime or loop forever.
+                        let scripts: Vec<String> = dom
+                            .find_by_tag("script")
+                            .iter()
+                            .map(|s| s.text_content())
+                            .filter(|c| !c.trim().is_empty())
+                            .collect();
+                        let audit_url = target_url.clone();
+                        let sinks = tokio::task::spawn_blocking(move || {
+                            audit_inline_scripts(
+                                &audit_url,
+                                &scripts,
+                                ScriptAuditBudget::default(),
+                                JsCancelHandle::new(),
+                            )
+                        })
+                        .await
+                        .unwrap_or_default();
+                        for sink in sinks {
+                            findings.push(GuiFindingItem {
+                                rule_id: "SEC-DOM-XSS-SINK".into(),
+                                severity: "HIGH".into(),
+                                title: format!("DOM XSS Sink Called: {}", sink.sink_name),
+                                description: format!(
+                                    "A dangerous sink function was called with client payload: {}",
+                                    sink.argument
+                                ),
+                                recommendation: "Sanitize user inputs before passing to eval(), innerHTML, or document.write().".into(),
+                                evidence: sink.argument,
+                                curl_command: format!("curl -i '{}'", target_url),
+                            });
                         }
 
                         let traffic_item = GuiTrafficItem {
@@ -890,6 +900,53 @@ impl GuiApp {
             XModeTab::ProxyManager => render_proxy_manager(ui, &mut self.proxy_state),
         }
     }
+}
+
+/// Limits for tracing a page's inline scripts.
+#[derive(Debug, Clone, Copy)]
+pub struct ScriptAuditBudget {
+    /// Budget for each individual script.
+    pub per_script: std::time::Duration,
+    /// Budget for all scripts on the page together.
+    pub total: std::time::Duration,
+    pub memory_limit_bytes: usize,
+}
+
+impl Default for ScriptAuditBudget {
+    fn default() -> Self {
+        Self {
+            per_script: std::time::Duration::from_millis(500),
+            total: std::time::Duration::from_secs(3),
+            memory_limit_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
+/// Runs a page's inline scripts in a sandboxed, resource-limited QuickJS runtime and
+/// returns the dangerous sinks they reached. Blocking: call from a blocking thread.
+pub fn audit_inline_scripts(
+    url: &str,
+    scripts: &[String],
+    budget: ScriptAuditBudget,
+    cancel: JsCancelHandle,
+) -> Vec<SinkFinding> {
+    let limits = ExecutionLimits {
+        time_budget: budget.per_script,
+        memory_limit_bytes: budget.memory_limit_bytes,
+        ..ExecutionLimits::default()
+    };
+    let Ok(js) = JsRuntime::with_limits(limits, cancel.clone()) else {
+        return Vec::new();
+    };
+    let _ = js.set_url(url);
+    let start = std::time::Instant::now();
+    for code in scripts {
+        if cancel.is_cancelled() || start.elapsed() >= budget.total {
+            break;
+        }
+        let _ = js.eval(code.trim());
+    }
+    js.get_sink_findings()
 }
 
 pub(crate) fn count_dom_nodes(node: &DomNode) -> usize {

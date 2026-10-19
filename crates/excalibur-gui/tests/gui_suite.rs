@@ -314,3 +314,57 @@ fn test_browser_internal_pages_and_omnibox_and_zoom() {
         app.render_panels(ctx);
     });
 }
+
+#[test]
+fn test_script_audit_survives_infinite_loop_and_keeps_tracing() {
+    use excalibur_gui::app::{audit_inline_scripts, ScriptAuditBudget};
+    use std::time::{Duration, Instant};
+
+    let scripts = vec![
+        "while (true) {}".to_string(),
+        "document.write('<b>' + location.hash + '</b>');".to_string(),
+    ];
+    let budget = ScriptAuditBudget {
+        per_script: Duration::from_millis(200),
+        total: Duration::from_secs(5),
+        ..Default::default()
+    };
+    let start = Instant::now();
+    let sinks = audit_inline_scripts(
+        "https://example.com/#x",
+        &scripts,
+        budget,
+        excalibur_script::JsCancelHandle::new(),
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(3),
+        "audit not bounded"
+    );
+    assert!(sinks.iter().any(|s| s.sink_name == "document.write"));
+}
+
+#[test]
+fn test_script_audit_honours_cancellation() {
+    use excalibur_gui::app::{audit_inline_scripts, ScriptAuditBudget};
+    use std::time::{Duration, Instant};
+
+    let cancel = excalibur_script::JsCancelHandle::new();
+    let trigger = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        trigger.cancel();
+    });
+    let budget = ScriptAuditBudget {
+        per_script: Duration::from_secs(60),
+        total: Duration::from_secs(120),
+        ..Default::default()
+    };
+    let start = Instant::now();
+    let scripts = vec!["while (true) {}".to_string(), "eval('1')".to_string()];
+    let sinks = audit_inline_scripts("https://example.com/", &scripts, budget, cancel);
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "cancel not honoured"
+    );
+    assert!(sinks.is_empty(), "scripts after cancellation must not run");
+}
