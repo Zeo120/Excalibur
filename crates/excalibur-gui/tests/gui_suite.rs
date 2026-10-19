@@ -368,3 +368,177 @@ fn test_script_audit_honours_cancellation() {
     );
     assert!(sinks.is_empty(), "scripts after cancellation must not run");
 }
+
+// ───────────── Navigation generations & cancellation (#21) ─────────────
+
+fn loaded_event(
+    tab_id: usize,
+    generation: u64,
+    title: &str,
+) -> excalibur_gui::app::PageNavigationEvent {
+    use excalibur_gui::app::{PageLoadedEvent, PageNavigationEvent};
+    use excalibur_gui::views::interceptor::GuiTrafficItem;
+    let html = format!("<html><head><title>{title}</title></head><body>{title}</body></html>");
+    PageNavigationEvent::Success(Box::new(PageLoadedEvent {
+        tab_id,
+        generation,
+        url: format!("https://{}.example/", title.to_lowercase()),
+        status: 200,
+        elapsed_ms: 1,
+        raw_html: html.clone(),
+        parsed_dom: excalibur_dom::HtmlParser::parse(&html),
+        title: title.to_string(),
+        findings: Vec::new(),
+        traffic_item: GuiTrafficItem {
+            id: "t".into(),
+            method: "GET".into(),
+            status: 200,
+            url: String::new(),
+            size: 0,
+            elapsed_ms: 1,
+            request_raw: String::new(),
+            response_raw: String::new(),
+        },
+    }))
+}
+
+#[test]
+fn test_stale_page_load_is_discarded() {
+    let mut app = create_test_app();
+    app.navigate(1, "excalibur://history"); // generation 1
+    app.navigate(1, "excalibur://bookmarks"); // generation 2
+    let current = app.tabs[0].nav_generation;
+    assert_eq!(current, 2);
+
+    // A response belonging to the first navigation arrives late.
+    app.page_tx
+        .send(loaded_event(1, current - 1, "Old"))
+        .unwrap();
+    app.poll_network_events();
+    assert_eq!(app.tabs[0].url, "excalibur://bookmarks");
+    assert_eq!(app.tabs[0].title, "Bookmarks");
+    assert!(app.interceptor_state.traffic_items.is_empty());
+
+    // The response for the current navigation is applied.
+    app.page_tx.send(loaded_event(1, current, "Fresh")).unwrap();
+    app.poll_network_events();
+    assert_eq!(app.tabs[0].title, "Fresh");
+    assert_eq!(app.tabs[0].url, "https://fresh.example/");
+}
+
+#[test]
+fn test_stale_failure_is_discarded() {
+    use excalibur_gui::app::PageNavigationEvent;
+    let mut app = create_test_app();
+    app.navigate(1, "excalibur://history");
+    let current = app.tabs[0].nav_generation;
+    app.page_tx
+        .send(PageNavigationEvent::Failure {
+            tab_id: 1,
+            generation: current - 1,
+            url: "https://old.example/".into(),
+            error: "boom".into(),
+        })
+        .unwrap();
+    app.poll_network_events();
+    assert!(app.tabs[0].error_msg.is_none());
+}
+
+#[test]
+fn test_stop_invalidates_queued_response() {
+    let mut app = create_test_app();
+    app.tabs[0].is_loading = true;
+    let generation = app.tabs[0].nav_generation;
+    app.stop_loading(1);
+    assert!(!app.tabs[0].is_loading);
+    // A response that was already in flight when Stop was pressed is ignored.
+    app.page_tx
+        .send(loaded_event(1, generation, "Late"))
+        .unwrap();
+    app.poll_network_events();
+    assert_ne!(app.tabs[0].title, "Late");
+}
+
+/// Local server that accepts one connection, never answers, and reports when the
+/// client side of the socket is closed.
+async fn hanging_server() -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    use tokio::io::AsyncReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let _ = accepted_tx.send(());
+        let mut buf = [0u8; 4096];
+        loop {
+            match sock.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
+        let _ = closed_tx.send(());
+    });
+    (format!("http://{}/", addr), accepted_rx, closed_rx)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_stop_cancels_in_flight_request() {
+    use std::time::Duration;
+    let (url, accepted, closed) = hanging_server().await;
+    let mut app = create_test_app();
+    app.navigate(1, &url);
+    assert!(app.tabs[0].is_loading);
+    tokio::time::timeout(Duration::from_secs(5), accepted)
+        .await
+        .expect("request never reached the server")
+        .unwrap();
+
+    app.stop_loading(1);
+    assert!(!app.tabs[0].is_loading);
+    assert!(app.tabs[0].nav_task.is_none());
+    tokio::time::timeout(Duration::from_secs(3), closed)
+        .await
+        .expect("Stop left the request's socket open")
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_new_navigation_cancels_previous_request() {
+    use std::time::Duration;
+    let (url, accepted, closed) = hanging_server().await;
+    let mut app = create_test_app();
+    app.navigate(1, &url);
+    tokio::time::timeout(Duration::from_secs(5), accepted)
+        .await
+        .unwrap()
+        .unwrap();
+    app.navigate(1, "excalibur://history");
+    assert!(!app.tabs[0].is_loading);
+    tokio::time::timeout(Duration::from_secs(3), closed)
+        .await
+        .expect("superseded request kept running")
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_closing_tab_cancels_its_request() {
+    use std::time::Duration;
+    let (url, accepted, closed) = hanging_server().await;
+    let mut app = create_test_app();
+    app.tabs.push(BrowserTab::new(2, "about:blank"));
+    app.navigate(2, &url);
+    tokio::time::timeout(Duration::from_secs(5), accepted)
+        .await
+        .unwrap()
+        .unwrap();
+    app.close_tab(2);
+    tokio::time::timeout(Duration::from_secs(3), closed)
+        .await
+        .expect("closed tab kept its request running")
+        .unwrap();
+}

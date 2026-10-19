@@ -129,6 +129,9 @@ impl GuiApp {
             return;
         };
         let removed = self.tabs.remove(idx);
+        if let Some(task) = &removed.nav_task {
+            task.cancel();
+        }
         if !is_internal_url(&removed.url) {
             self.closed_tabs_history.push(removed.url);
         }
@@ -290,9 +293,7 @@ impl GuiApp {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
                 if loading {
                     if chrome_button(ui, Icon::Close, true, "Stop").clicked() {
-                        if let Some(t) = self.active_tab_mut() {
-                            t.is_loading = false;
-                        }
+                        self.stop_loading(self.active_tab_id);
                     }
                 } else if chrome_button(ui, Icon::Reload, true, "Reload (Ctrl+R)").clicked() {
                     self.reload_active();

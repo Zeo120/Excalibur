@@ -44,6 +44,26 @@ pub struct BrowserTab {
     pub find_query: String,
     /// Pinned tabs sit above the divider and survive "Clear".
     pub pinned: bool,
+    /// Incremented on every navigation or stop; responses tagged with an older
+    /// generation are stale and discarded.
+    pub nav_generation: u64,
+    /// Handle to the in-flight load, used to cancel it.
+    pub nav_task: Option<NavTask>,
+}
+
+/// Cancellation handles for one in-flight page load.
+#[derive(Clone)]
+pub struct NavTask {
+    abort: tokio::task::AbortHandle,
+    js_cancel: JsCancelHandle,
+}
+
+impl NavTask {
+    /// Stops the network request (dropping its socket) and any running page script.
+    pub fn cancel(&self) {
+        self.abort.abort();
+        self.js_cancel.cancel();
+    }
 }
 
 impl BrowserTab {
@@ -70,12 +90,15 @@ impl BrowserTab {
             show_find: false,
             find_query: String::new(),
             pinned: false,
+            nav_generation: 0,
+            nav_task: None,
         }
     }
 }
 
 pub struct PageLoadedEvent {
     pub tab_id: usize,
+    pub generation: u64,
     pub url: String,
     pub status: u16,
     pub elapsed_ms: u64,
@@ -90,6 +113,7 @@ pub enum PageNavigationEvent {
     Success(Box<PageLoadedEvent>),
     Failure {
         tab_id: usize,
+        generation: u64,
         url: String,
         error: String,
     },
@@ -285,6 +309,12 @@ impl GuiApp {
         };
 
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            // Supersede whatever this tab was loading before.
+            if let Some(task) = tab.nav_task.take() {
+                task.cancel();
+            }
+            tab.nav_generation += 1;
+            let generation = tab.nav_generation;
             tab.url = normalized.clone();
             tab.is_loading = true;
             tab.error_msg = None;
@@ -343,12 +373,20 @@ impl GuiApp {
             let tx = self.page_tx.clone();
             let target_url = normalized.clone();
             let ctx_opt = self.egui_ctx.clone();
+            let js_cancel = JsCancelHandle::new();
+            let task_js_cancel = js_cancel.clone();
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let client = match HttpClient::new(ClientOptions::default()) {
                     Ok(c) => c,
                     Err(e) => {
                         tracing::error!("Failed to initialize HTTP client: {}", e);
+                        let _ = tx.send(PageNavigationEvent::Failure {
+                            tab_id,
+                            generation,
+                            url: target_url,
+                            error: e.to_string(),
+                        });
                         return;
                     }
                 };
@@ -421,7 +459,7 @@ impl GuiApp {
                                 &audit_url,
                                 &scripts,
                                 ScriptAuditBudget::default(),
-                                JsCancelHandle::new(),
+                                task_js_cancel,
                             )
                         })
                         .await
@@ -470,6 +508,7 @@ impl GuiApp {
 
                         let _ = tx.send(PageNavigationEvent::Success(Box::new(PageLoadedEvent {
                             tab_id,
+                            generation,
                             url: final_url,
                             status: res.status,
                             elapsed_ms: res.elapsed_ms,
@@ -487,6 +526,7 @@ impl GuiApp {
                         tracing::error!("Navigation error for {}: {}", target_url, e);
                         let _ = tx.send(PageNavigationEvent::Failure {
                             tab_id,
+                            generation,
                             url: target_url,
                             error: e.to_string(),
                         });
@@ -496,7 +536,31 @@ impl GuiApp {
                     }
                 }
             });
+            tab.nav_task = Some(NavTask {
+                abort: handle.abort_handle(),
+                js_cancel,
+            });
         }
+    }
+
+    /// Cancels the tab's in-flight load: aborts the request and page scripts and
+    /// invalidates any response already queued for it.
+    pub fn stop_loading(&mut self, tab_id: usize) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(task) = tab.nav_task.take() {
+                task.cancel();
+            }
+            if tab.is_loading {
+                tab.nav_generation += 1;
+                tab.is_loading = false;
+            }
+        }
+    }
+
+    fn is_current_generation(&self, tab_id: usize, generation: u64) -> bool {
+        self.tabs
+            .iter()
+            .any(|t| t.id == tab_id && t.nav_generation == generation)
     }
 
     pub fn poll_network_events(&mut self) {
@@ -504,6 +568,10 @@ impl GuiApp {
             match event {
                 PageNavigationEvent::Success(loaded) => {
                     let tab_id = loaded.tab_id;
+                    if !self.is_current_generation(tab_id, loaded.generation) {
+                        tracing::debug!("Discarding stale page load for tab {}", tab_id);
+                        continue;
+                    }
                     let loaded_url = loaded.url.clone();
                     let loaded_title = loaded.title.clone();
 
@@ -516,6 +584,7 @@ impl GuiApp {
 
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.is_loading = false;
+                        tab.nav_task = None;
                         tab.error_msg = None;
                         tab.url = loaded_url.clone();
                         tab.status_code = Some(loaded.status);
@@ -543,11 +612,16 @@ impl GuiApp {
                 }
                 PageNavigationEvent::Failure {
                     tab_id,
+                    generation,
                     url: _,
                     error,
                 } => {
+                    if !self.is_current_generation(tab_id, generation) {
+                        continue;
+                    }
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.is_loading = false;
+                        tab.nav_task = None;
                         tab.error_msg = Some(error);
                     }
                 }
