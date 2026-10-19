@@ -646,14 +646,14 @@ impl BrowserRenderer {
 
                     ui.add_space(24.0);
 
-                    // 2. Search Pill (580px width, 24px corner radius)
+                    // 2. Search Pill (580px width, 12px corner radius)
                     ui.vertical_centered(|ui| {
                         let search_box_width = content_width.min(580.0);
                         Frame::NONE
                             .fill(colors::INPUT_BG)
                             .stroke(Stroke::new(1.0_f32, colors::BORDER))
-                            .corner_radius(egui::CornerRadius::same(24))
-                            .inner_margin(Margin::symmetric(18, 10))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .inner_margin(Margin::symmetric(16, 9))
                             .show(ui, |ui| {
                                 ui.set_width(search_box_width);
                                 ui.horizontal(|ui| {
@@ -888,53 +888,78 @@ impl BrowserRenderer {
                                 .strong()
                                 .color(colors::TEXT_PRIMARY),
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
 
-                        for (name, url, desc) in targets {
-                            Frame::NONE
-                                .fill(colors::CARD_BG)
-                                .stroke(Stroke::new(1.0_f32, colors::BORDER))
-                                .corner_radius(egui::CornerRadius::same(8))
-                                .inner_margin(Margin::symmetric(14, 10))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(
-                                                RichText::new(name)
-                                                    .size(13.5)
-                                                    .strong()
-                                                    .color(colors::TEXT_PRIMARY),
-                                            );
-                                            ui.label(
-                                                RichText::new(desc)
-                                                    .size(11.5)
-                                                    .color(colors::TEXT_SECONDARY),
-                                            );
-                                            ui.label(
-                                                RichText::new(url).size(11.5).color(colors::ACCENT),
-                                            );
+                        let use_two_cols = content_width >= 620.0;
+                        let chunk_size = if use_two_cols { 2 } else { 1 };
+                        let col_w = if use_two_cols {
+                            ((content_width - 12.0) / 2.0).floor()
+                        } else {
+                            content_width
+                        };
+
+                        for chunk in targets.chunks(chunk_size) {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(12.0, 0.0);
+                                for &(name, url, desc) in chunk {
+                                    let card_resp = Frame::NONE
+                                        .fill(colors::CARD_BG)
+                                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
+                                        .corner_radius(egui::CornerRadius::same(8))
+                                        .inner_margin(Margin::symmetric(14, 10))
+                                        .show(ui, |ui| {
+                                            ui.set_width(col_w);
+                                            ui.set_min_height(64.0);
+                                            ui.horizontal(|ui| {
+                                                ui.vertical(|ui| {
+                                                    ui.label(
+                                                        RichText::new(name)
+                                                            .size(13.0)
+                                                            .strong()
+                                                            .color(colors::TEXT_PRIMARY),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(desc)
+                                                            .size(11.0)
+                                                            .color(colors::TEXT_SECONDARY),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(url)
+                                                            .size(10.5)
+                                                            .color(colors::ACCENT),
+                                                    );
+                                                });
+
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        if ui
+                                                            .button(
+                                                                RichText::new("Open")
+                                                                    .strong()
+                                                                    .size(11.0)
+                                                                    .color(colors::ACCENT),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            *action =
+                                                                Some(BrowserAction::Navigate(
+                                                                    url.to_string(),
+                                                                ));
+                                                        }
+                                                    },
+                                                );
+                                            });
                                         });
 
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui
-                                                    .button(
-                                                        RichText::new("Open")
-                                                            .strong()
-                                                            .color(colors::ACCENT),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    *action = Some(BrowserAction::Navigate(
-                                                        url.to_string(),
-                                                    ));
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
-                            ui.add_space(6.0);
+                                    if card_resp.response.interact(egui::Sense::click()).clicked() {
+                                        *action = Some(BrowserAction::Navigate(url.to_string()));
+                                    }
+                                }
+                            });
+                            ui.add_space(8.0);
                         }
 
                         ui.add_space(14.0);

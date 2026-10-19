@@ -722,7 +722,11 @@ impl GuiApp {
 
         // 1. Top Browser Navigation Header
         egui::TopBottomPanel::top("browser_top_header")
-            .frame(Frame::NONE.fill(colors::TOOLBAR_BG))
+            .frame(
+                Frame::NONE
+                    .fill(colors::TOOLBAR_BG)
+                    .stroke(Stroke::new(1.0_f32, colors::BORDER)),
+            )
             .show(ctx, |ui| {
                 if self.tab_nav_layout == TabNavLayout::Top {
                     self.render_tab_strip(ui);
@@ -828,12 +832,12 @@ impl GuiApp {
                     colors::BORDER
                 };
 
-                Frame::NONE
+                let tab_frame_resp = Frame::NONE
                     .fill(bg_color)
                     .stroke(Stroke::new(1.0_f32, stroke_color))
                     .corner_radius(egui::CornerRadius {
-                        nw: 8,
-                        ne: 8,
+                        nw: 6,
+                        ne: 6,
                         sw: 0,
                         se: 0,
                     })
@@ -866,24 +870,30 @@ impl GuiApp {
                                 colors::TEXT_SECONDARY
                             };
 
-                            let title_btn = ui.selectable_label(
-                                is_active,
-                                RichText::new(label_text).color(title_color).strong(),
-                            );
-                            if title_btn.clicked() {
-                                self.active_tab_id = tab.id;
-                                self.omnibox_input = tab.url.clone();
-                            }
+                            ui.label(RichText::new(label_text).color(title_color).strong());
 
                             if tab.is_loading {
                                 ui.spinner();
                             }
 
-                            if self.tabs.len() > 1 && ui.small_button("x").clicked() {
+                            if self.tabs.len() > 1
+                                && ui.small_button("x").on_hover_text("Close tab").clicked()
+                            {
                                 close_tab_id = Some(tab.id);
                             }
                         });
                     });
+
+                if close_tab_id != Some(tab.id)
+                    && tab_frame_resp
+                        .response
+                        .interact(egui::Sense::click())
+                        .clicked()
+                {
+                    self.active_tab_id = tab.id;
+                    self.omnibox_input = tab.url.clone();
+                }
+
                 ui.add_space(2.0);
             }
 
@@ -898,29 +908,23 @@ impl GuiApp {
             }
 
             // New Tab '+' button
-            Frame::NONE
-                .fill(colors::INPUT_BG)
-                .stroke(Stroke::new(1.0_f32, colors::BORDER))
-                .corner_radius(egui::CornerRadius::same(12))
-                .inner_margin(Margin::symmetric(7, 3))
-                .show(ui, |ui| {
-                    if ui
-                        .button(
-                            RichText::new("+")
-                                .size(13.0)
-                                .strong()
-                                .color(colors::TEXT_SECONDARY),
-                        )
-                        .clicked()
-                    {
-                        let new_id = self.next_tab_id;
-                        self.next_tab_id += 1;
-                        self.tabs
-                            .push(BrowserTab::new(new_id, "excalibur://newtab"));
-                        self.active_tab_id = new_id;
-                        self.omnibox_input = "excalibur://newtab".to_string();
-                    }
-                });
+            if ui
+                .button(
+                    RichText::new("+")
+                        .size(13.0)
+                        .strong()
+                        .color(colors::TEXT_SECONDARY),
+                )
+                .on_hover_text("New tab (Ctrl+T)")
+                .clicked()
+            {
+                let new_id = self.next_tab_id;
+                self.next_tab_id += 1;
+                self.tabs
+                    .push(BrowserTab::new(new_id, "excalibur://newtab"));
+                self.active_tab_id = new_id;
+                self.omnibox_input = "excalibur://newtab".to_string();
+            }
 
             // Right-aligned X-Mode Toggle & Zen Toggle
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1045,31 +1049,31 @@ impl GuiApp {
                 for tab in &self.tabs {
                     let is_active = tab.id == self.active_tab_id;
                     let bg_color = if is_active {
-                        colors::TOOLBAR_BG
+                        colors::CARD_BG
                     } else {
-                        colors::SIDEBAR_BG
+                        Color32::TRANSPARENT
                     };
 
                     let stroke_color = if is_active {
                         colors::BORDER_LIGHT
                     } else {
-                        colors::BORDER
+                        Color32::TRANSPARENT
                     };
 
-                    Frame::NONE
+                    let tab_card_resp = Frame::NONE
                         .fill(bg_color)
                         .stroke(Stroke::new(1.0_f32, stroke_color))
                         .corner_radius(egui::CornerRadius::same(6))
                         .inner_margin(Margin::symmetric(8, 6))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                // Accent indicator bar for active tab
+                                // Accent indicator bar for active tab (3px pill on left)
                                 if is_active {
                                     let (bar_rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(2.5, 14.0),
+                                        egui::vec2(3.0, 14.0),
                                         egui::Sense::hover(),
                                     );
-                                    ui.painter().rect_filled(bar_rect, 1.0, colors::ACCENT);
+                                    ui.painter().rect_filled(bar_rect, 1.5, colors::ACCENT);
                                 }
 
                                 let tag = site_pill_tag(&tab.url);
@@ -1086,8 +1090,8 @@ impl GuiApp {
                                         );
                                     });
 
-                                let label_text = if tab.title.len() > 14 {
-                                    format!("{}…", &tab.title[..12])
+                                let label_text = if tab.title.len() > 16 {
+                                    format!("{}…", &tab.title[..14])
                                 } else {
                                     tab.title.clone()
                                 };
@@ -1098,16 +1102,7 @@ impl GuiApp {
                                     colors::TEXT_SECONDARY
                                 };
 
-                                if ui
-                                    .selectable_label(
-                                        is_active,
-                                        RichText::new(label_text).color(title_color).strong(),
-                                    )
-                                    .clicked()
-                                {
-                                    select_tab_id = Some(tab.id);
-                                    new_omnibox = Some(tab.url.clone());
-                                }
+                                ui.label(RichText::new(label_text).color(title_color).strong());
 
                                 if tab.is_loading {
                                     ui.spinner();
@@ -1117,7 +1112,11 @@ impl GuiApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if ui.small_button("x").clicked() {
+                                            if ui
+                                                .small_button("x")
+                                                .on_hover_text("Close tab")
+                                                .clicked()
+                                            {
                                                 close_tab_id = Some(tab.id);
                                             }
                                         },
@@ -1125,7 +1124,18 @@ impl GuiApp {
                                 }
                             });
                         });
-                    ui.add_space(4.0);
+
+                    if close_tab_id != Some(tab.id)
+                        && tab_card_resp
+                            .response
+                            .interact(egui::Sense::click())
+                            .clicked()
+                    {
+                        select_tab_id = Some(tab.id);
+                        new_omnibox = Some(tab.url.clone());
+                    }
+
+                    ui.add_space(3.0);
                 }
             });
 
@@ -1239,6 +1249,7 @@ impl GuiApp {
                                 RichText::new("<").size(13.0).color(back_col).strong(),
                             ),
                         )
+                        .on_hover_text("Back (Alt+Left)")
                         .clicked()
                     {
                         if let Some(tab) = self.active_tab_mut() {
@@ -1263,6 +1274,7 @@ impl GuiApp {
                                 RichText::new(">").size(13.0).color(fwd_col).strong(),
                             ),
                         )
+                        .on_hover_text("Forward (Alt+Right)")
                         .clicked()
                     {
                         if let Some(tab) = self.active_tab_mut() {
@@ -1276,6 +1288,11 @@ impl GuiApp {
 
                     // Reload / Cancel button
                     let reload_label = if is_loading { "X" } else { "R" };
+                    let reload_tooltip = if is_loading {
+                        "Stop loading (Esc)"
+                    } else {
+                        "Reload page (Ctrl+R / F5)"
+                    };
                     if ui
                         .button(
                             RichText::new(reload_label)
@@ -1283,6 +1300,7 @@ impl GuiApp {
                                 .color(colors::TEXT_PRIMARY)
                                 .strong(),
                         )
+                        .on_hover_text(reload_tooltip)
                         .clicked()
                     {
                         if is_loading {
@@ -1303,6 +1321,7 @@ impl GuiApp {
                                 .color(colors::TEXT_PRIMARY)
                                 .strong(),
                         )
+                        .on_hover_text("Open Homepage (Alt+Home)")
                         .clicked()
                     {
                         self.navigate(active_id, "excalibur://newtab");
@@ -1321,7 +1340,7 @@ impl GuiApp {
                     Frame::NONE
                         .fill(colors::INPUT_BG)
                         .stroke(Stroke::new(1.0_f32, colors::BORDER))
-                        .corner_radius(egui::CornerRadius::same(18))
+                        .corner_radius(egui::CornerRadius::same(12))
                         .inner_margin(Margin::symmetric(12, 4))
                         .show(ui, |ui| {
                             ui.set_width(omnibox_width);
@@ -1445,6 +1464,7 @@ impl GuiApp {
                                     .button(
                                         RichText::new("Copy").size(11.0).color(colors::TEXT_MUTED),
                                     )
+                                    .on_hover_text("Copy address to clipboard")
                                     .clicked()
                                 {
                                     ui.ctx().copy_text(self.omnibox_input.clone());
@@ -1729,7 +1749,6 @@ impl GuiApp {
         let active_id = self.active_tab_id;
         Frame::NONE
             .fill(colors::TOOLBAR_BG)
-            .stroke(Stroke::new(1.0_f32, colors::BORDER))
             .corner_radius(egui::CornerRadius::same(0))
             .inner_margin(Margin::symmetric(10, 3))
             .show(ui, |ui| {
