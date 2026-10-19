@@ -1,3 +1,4 @@
+use crate::theme::colors;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
 use excalibur_dom::{CssColor, DomNode, NodeType, StyleResolver, StyleSheet};
 use std::collections::{HashMap, HashSet};
@@ -480,45 +481,23 @@ impl BrowserRenderer {
     fn render_loading(&self, ui: &mut Ui, url: &str) {
         let time = ui.input(|i| i.time);
         ui.vertical_centered(|ui| {
-            ui.add_space(50.0);
+            ui.add_space(80.0);
 
             Frame::NONE
-                .fill(Color32::from_rgb(32, 33, 36))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
-                .corner_radius(egui::CornerRadius::same(8))
-                .inner_margin(Margin::symmetric(28, 22))
+                .fill(colors::CARD_BG)
+                .stroke(Stroke::new(1.0_f32, colors::BORDER))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(Margin::symmetric(36, 26))
                 .show(ui, |ui| {
-                    ui.set_max_width(540.0);
+                    ui.set_max_width(480.0);
 
-                    // Telemetry Header
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Connecting...")
-                                .size(11.5)
-                                .color(Color32::from_rgb(154, 160, 166))
-                                .strong(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let cycle = ((time * 2.5).sin() * 0.5 + 0.5) as f32;
-                            let alpha = (130.0 + cycle * 125.0) as u8;
-                            ui.label(
-                                RichText::new("TLS 1.3 Handshake")
-                                    .size(10.5)
-                                    .color(Color32::from_rgba_unmultiplied(138, 180, 248, alpha))
-                                    .strong(),
-                            );
-                        });
-                    });
-
-                    ui.add_space(14.0);
-
-                    // Chrome Blue Progress Track
+                    // Refined 3px animated progress beam
                     let (track_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 3.5),
+                        egui::vec2(ui.available_width(), 3.0),
                         egui::Sense::hover(),
                     );
                     let painter = ui.painter();
-                    painter.rect_filled(track_rect, 2.0, Color32::from_rgb(48, 51, 56));
+                    painter.rect_filled(track_rect, 1.5, colors::INPUT_BG);
 
                     let speed = 1.2;
                     let progress = (time * speed).fract() as f32;
@@ -533,51 +512,39 @@ impl BrowserRenderer {
                             egui::pos2(x_clamped_start, track_rect.min.y),
                             egui::pos2(x_clamped_end, track_rect.max.y),
                         );
-                        painter.rect_filled(beam_rect, 2.0, Color32::from_rgb(138, 180, 248));
+                        painter.rect_filled(beam_rect, 1.5, colors::ACCENT);
                     }
 
                     ui.add_space(18.0);
 
                     ui.label(
-                        RichText::new("Loading Webpage...")
-                            .size(18.0)
+                        RichText::new("Loading page…")
+                            .size(16.5)
                             .strong()
-                            .color(Color32::from_rgb(241, 243, 244)),
+                            .color(colors::TEXT_PRIMARY),
                     );
 
                     ui.add_space(6.0);
 
-                    Frame::NONE
-                        .fill(Color32::from_rgb(40, 42, 45))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(Margin::symmetric(12, 6))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(url)
-                                    .size(12.0)
-                                    .color(Color32::from_rgb(138, 180, 248))
-                                    .monospace(),
-                            );
-                        });
+                    let display_url = if url.len() > 64 {
+                        format!("{}…", &url[..62])
+                    } else {
+                        url.to_string()
+                    };
 
-                    ui.add_space(14.0);
-
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-                        render_stage_badge(ui, "[DNS RESOLVED]", true);
-                        render_stage_badge(ui, "[TLS 1.3 SECURE]", true);
-                        render_stage_badge(ui, "[HTTP DISPATCH]", true);
-                        render_stage_badge(ui, "[DOM COMPILER]", false);
-                    });
-
-                    ui.add_space(10.0);
                     ui.label(
-                        RichText::new(
-                            "Resolving socket stream and parsing HTML document structure...",
-                        )
-                        .size(11.0)
-                        .color(Color32::from_rgb(154, 160, 166)),
+                        RichText::new(display_url)
+                            .size(12.0)
+                            .color(colors::TEXT_SECONDARY)
+                            .monospace(),
+                    );
+
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        RichText::new("Connecting…")
+                            .size(11.0)
+                            .color(colors::TEXT_MUTED),
                     );
                 });
         });
@@ -588,9 +555,9 @@ impl BrowserRenderer {
             ui.add_space(60.0);
             ui.label(
                 RichText::new("This site can't be reached")
-                    .size(22.0)
+                    .size(20.0)
                     .strong()
-                    .color(Color32::from_rgb(241, 243, 244)),
+                    .color(colors::TEXT_PRIMARY),
             );
             ui.add_space(6.0);
             ui.label(
@@ -598,22 +565,18 @@ impl BrowserRenderer {
                     "{} took too long to respond or is unreachable.",
                     url
                 ))
-                .size(13.0)
-                .color(Color32::from_rgb(154, 160, 166)),
+                .size(12.5)
+                .color(colors::TEXT_SECONDARY),
             );
-            ui.add_space(12.0);
+            ui.add_space(14.0);
 
             Frame::NONE
-                .fill(Color32::from_rgb(32, 33, 36))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                .fill(colors::CARD_BG)
+                .stroke(Stroke::new(1.0_f32, colors::BORDER))
                 .inner_margin(Margin::same(14))
                 .corner_radius(egui::CornerRadius::same(8))
                 .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(err)
-                            .size(12.0)
-                            .color(Color32::from_rgb(234, 67, 53)),
-                    );
+                    ui.label(RichText::new(err).size(12.0).color(colors::DANGER));
                 });
 
             ui.add_space(18.0);
@@ -622,7 +585,7 @@ impl BrowserRenderer {
                     RichText::new("Reload")
                         .size(13.0)
                         .strong()
-                        .color(Color32::from_rgb(138, 180, 248)),
+                        .color(colors::ACCENT),
                 )
                 .clicked()
             {
@@ -643,19 +606,19 @@ impl BrowserRenderer {
                 ui.vertical(|ui| {
                     ui.set_max_width(content_width);
 
-                    // 1. Stock Chrome Centered Wordmark & Subtitle
+                    // 1. Centered Wordmark & Subtitle
                     ui.vertical_centered(|ui| {
                         ui.label(
                             RichText::new("Excalibur")
                                 .size(44.0)
                                 .strong()
-                                .color(Color32::from_rgb(241, 243, 244)),
+                                .color(colors::TEXT_PRIMARY),
                         );
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new("Fast, minimal, security-first web architecture")
                                 .size(13.5)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                         );
                         ui.add_space(12.0);
 
@@ -671,9 +634,7 @@ impl BrowserRenderer {
                             for (label, uri) in nav_links {
                                 if ui
                                     .button(
-                                        RichText::new(label)
-                                            .size(12.0)
-                                            .color(Color32::from_rgb(154, 160, 166)),
+                                        RichText::new(label).size(12.0).color(colors::TEXT_MUTED),
                                     )
                                     .clicked()
                                 {
@@ -685,12 +646,12 @@ impl BrowserRenderer {
 
                     ui.add_space(24.0);
 
-                    // 2. Stock Chrome Search Pill (580px width, 24px corner radius)
+                    // 2. Search Pill (580px width, 24px corner radius)
                     ui.vertical_centered(|ui| {
                         let search_box_width = content_width.min(580.0);
                         Frame::NONE
-                            .fill(Color32::from_rgb(32, 33, 36))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                            .fill(colors::INPUT_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(24))
                             .inner_margin(Margin::symmetric(18, 10))
                             .show(ui, |ui| {
@@ -699,7 +660,7 @@ impl BrowserRenderer {
                                     ui.label(
                                         RichText::new("Search")
                                             .size(12.0)
-                                            .color(Color32::from_rgb(154, 160, 166)),
+                                            .color(colors::TEXT_MUTED),
                                     );
                                     ui.add_space(4.0);
 
@@ -714,9 +675,7 @@ impl BrowserRenderer {
                                         && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                                         || ui
                                             .button(
-                                                RichText::new("Go")
-                                                    .strong()
-                                                    .color(Color32::from_rgb(138, 180, 248)),
+                                                RichText::new("Go").strong().color(colors::ACCENT),
                                             )
                                             .clicked();
 
@@ -744,7 +703,7 @@ impl BrowserRenderer {
 
                     ui.add_space(28.0);
 
-                    // 3. Stock Chrome Circular Shortcut Tiles (8 Shortcuts)
+                    // 3. Circular Shortcut Tiles (8 Shortcuts)
                     ui.vertical_centered(|ui| {
                         let shortcuts: [(&str, &str, &str, Color32); 8] = [
                             (
@@ -757,26 +716,16 @@ impl BrowserRenderer {
                                 "YouTube",
                                 "https://www.youtube.com",
                                 "Y",
-                                Color32::from_rgb(255, 0, 0),
+                                colors::YOUTUBE_RED,
                             ),
-                            (
-                                "GitHub",
-                                "https://github.com",
-                                "GH",
-                                Color32::from_rgb(241, 243, 244),
-                            ),
+                            ("GitHub", "https://github.com", "GH", colors::TEXT_PRIMARY),
                             (
                                 "Hacker News",
                                 "https://news.ycombinator.com",
                                 "HN",
                                 Color32::from_rgb(255, 102, 0),
                             ),
-                            (
-                                "OWASP",
-                                "https://owasp.org",
-                                "OW",
-                                Color32::from_rgb(138, 180, 248),
-                            ),
+                            ("OWASP", "https://owasp.org", "OW", colors::ACCENT),
                             (
                                 "PortSwigger",
                                 "https://portswigger.net/web-security",
@@ -787,13 +736,13 @@ impl BrowserRenderer {
                                 "MDN Docs",
                                 "https://developer.mozilla.org",
                                 "MDN",
-                                Color32::from_rgb(52, 168, 83),
+                                colors::SUCCESS,
                             ),
                             (
                                 "Wikipedia",
                                 "https://wikipedia.org",
                                 "W",
-                                Color32::from_rgb(218, 220, 224),
+                                colors::TEXT_SECONDARY,
                             ),
                         ];
 
@@ -816,7 +765,7 @@ impl BrowserRenderer {
                                     painter.rect_filled(
                                         tile_rect,
                                         8.0,
-                                        Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+                                        Color32::from_rgba_unmultiplied(255, 255, 255, 8),
                                     );
                                 }
 
@@ -824,15 +773,15 @@ impl BrowserRenderer {
                                 let circle_center =
                                     egui::pos2(tile_rect.center().x, tile_rect.min.y + 28.0);
                                 let circle_bg = if tile_resp.hovered() {
-                                    Color32::from_rgb(60, 64, 67)
+                                    colors::BORDER_LIGHT
                                 } else {
-                                    Color32::from_rgb(48, 51, 56)
+                                    colors::CARD_BG
                                 };
                                 painter.circle_filled(circle_center, 24.0, circle_bg);
                                 painter.circle_stroke(
                                     circle_center,
                                     24.0,
-                                    Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)),
+                                    Stroke::new(1.0_f32, colors::BORDER),
                                 );
 
                                 // Monogram
@@ -850,7 +799,7 @@ impl BrowserRenderer {
                                     egui::Align2::CENTER_CENTER,
                                     name,
                                     egui::FontId::proportional(11.0),
-                                    Color32::from_rgb(218, 220, 224),
+                                    colors::TEXT_SECONDARY,
                                 );
                             }
                         });
@@ -858,7 +807,7 @@ impl BrowserRenderer {
 
                     ui.add_space(32.0);
 
-                    // 4. Categorized Speed Dial Targets (Stock Chrome Dark Surfaces)
+                    // 4. Categorized Speed Dial Targets
                     let categories = [
                         (
                             "Security Testing & Labs",
@@ -937,14 +886,14 @@ impl BrowserRenderer {
                             RichText::new(cat_name)
                                 .size(13.0)
                                 .strong()
-                                .color(Color32::from_rgb(241, 243, 244)),
+                                .color(colors::TEXT_PRIMARY),
                         );
                         ui.add_space(6.0);
 
                         for (name, url, desc) in targets {
                             Frame::NONE
-                                .fill(Color32::from_rgb(32, 33, 36))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                                .fill(colors::CARD_BG)
+                                .stroke(Stroke::new(1.0_f32, colors::BORDER))
                                 .corner_radius(egui::CornerRadius::same(8))
                                 .inner_margin(Margin::symmetric(14, 10))
                                 .show(ui, |ui| {
@@ -954,17 +903,15 @@ impl BrowserRenderer {
                                                 RichText::new(name)
                                                     .size(13.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(241, 243, 244)),
+                                                    .color(colors::TEXT_PRIMARY),
                                             );
                                             ui.label(
                                                 RichText::new(desc)
                                                     .size(11.5)
-                                                    .color(Color32::from_rgb(154, 160, 166)),
+                                                    .color(colors::TEXT_SECONDARY),
                                             );
                                             ui.label(
-                                                RichText::new(url)
-                                                    .size(11.5)
-                                                    .color(Color32::from_rgb(138, 180, 248)),
+                                                RichText::new(url).size(11.5).color(colors::ACCENT),
                                             );
                                         });
 
@@ -973,9 +920,9 @@ impl BrowserRenderer {
                                             |ui| {
                                                 if ui
                                                     .button(
-                                                        RichText::new("Open").strong().color(
-                                                            Color32::from_rgb(138, 180, 248),
-                                                        ),
+                                                        RichText::new("Open")
+                                                            .strong()
+                                                            .color(colors::ACCENT),
                                                     )
                                                     .clicked()
                                                 {
@@ -993,10 +940,10 @@ impl BrowserRenderer {
                         ui.add_space(14.0);
                     }
 
-                    // 5. Engine Diagnostics Dashboard
+                    // 5. Engine Telemetry Panel
                     Frame::NONE
-                        .fill(Color32::from_rgb(18, 18, 18))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::SIDEBAR_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(12))
                         .show(ui, |ui| {
@@ -1006,11 +953,11 @@ impl BrowserRenderer {
                                         RichText::new("ENGINE TELEMETRY")
                                             .size(10.5)
                                             .strong()
-                                            .color(Color32::from_rgb(154, 160, 166)),
+                                            .color(colors::TEXT_MUTED),
                                     );
                                     ui.label(
                                         RichText::new("Hyper + Rustls 0.23 (TLS 1.3)")
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                 });
                                 ui.separator();
@@ -1019,11 +966,11 @@ impl BrowserRenderer {
                                         RichText::new("MITM PROXY")
                                             .size(10.5)
                                             .strong()
-                                            .color(Color32::from_rgb(138, 180, 248)),
+                                            .color(colors::ACCENT),
                                     );
                                     ui.label(
                                         RichText::new("127.0.0.1:8080 (Listening)")
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                 });
                                 ui.separator();
@@ -1032,11 +979,11 @@ impl BrowserRenderer {
                                         RichText::new("DOM PARSER")
                                             .size(10.5)
                                             .strong()
-                                            .color(Color32::from_rgb(52, 168, 83)),
+                                            .color(colors::SUCCESS),
                                     );
                                     ui.label(
                                         RichText::new("Pure-Rust Semantic AST")
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                 });
                                 ui.separator();
@@ -1045,11 +992,11 @@ impl BrowserRenderer {
                                         RichText::new("SECURITY ENGINE")
                                             .size(10.5)
                                             .strong()
-                                            .color(Color32::from_rgb(234, 67, 53)),
+                                            .color(colors::DANGER),
                                     );
                                     ui.label(
                                         RichText::new("Passive Radar + X-Mode")
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                 });
                             });
@@ -1082,15 +1029,15 @@ impl BrowserRenderer {
                     // Header row
                     ui.horizontal(|ui| {
                         Frame::NONE
-                            .fill(Color32::from_rgb(40, 42, 45))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                            .fill(colors::TOOLBAR_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(6))
                             .inner_margin(Margin::symmetric(10, 4))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new("HISTORY")
                                         .size(11.5)
-                                        .color(Color32::from_rgb(138, 180, 248))
+                                        .color(colors::ACCENT)
                                         .strong(),
                                 );
                             });
@@ -1099,7 +1046,7 @@ impl BrowserRenderer {
                         ui.label(
                             RichText::new("Browsing History & Audit Timeline")
                                 .size(22.0)
-                                .color(Color32::from_rgb(241, 243, 244))
+                                .color(colors::TEXT_PRIMARY)
                                 .strong(),
                         );
 
@@ -1108,7 +1055,7 @@ impl BrowserRenderer {
                                 if ui
                                     .button(
                                         RichText::new("Confirm Clear All")
-                                            .color(Color32::from_rgb(234, 67, 53))
+                                            .color(colors::DANGER)
                                             .strong(),
                                     )
                                     .clicked()
@@ -1120,10 +1067,7 @@ impl BrowserRenderer {
                                     self.clear_history_confirm = false;
                                 }
                             } else if ui
-                                .button(
-                                    RichText::new("Clear History")
-                                        .color(Color32::from_rgb(234, 67, 53)),
-                                )
+                                .button(RichText::new("Clear History").color(colors::DANGER))
                                 .clicked()
                             {
                                 self.clear_history_confirm = true;
@@ -1135,15 +1079,15 @@ impl BrowserRenderer {
 
                     // Search filter box
                     Frame::NONE
-                        .fill(Color32::from_rgb(40, 42, 45))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::symmetric(12, 8))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Filter:")
-                                        .color(Color32::from_rgb(154, 160, 166))
+                                        .color(colors::TEXT_SECONDARY)
                                         .strong(),
                                 );
                                 ui.add(
@@ -1173,8 +1117,8 @@ impl BrowserRenderer {
 
                     if history_entries.is_empty() {
                         Frame::NONE
-                            .fill(Color32::from_rgb(32, 33, 36))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                            .fill(colors::CARD_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(8))
                             .inner_margin(Margin::symmetric(24, 20))
                             .show(ui, |ui| {
@@ -1182,7 +1126,7 @@ impl BrowserRenderer {
                                     ui.label(
                                         RichText::new("No browsing history found.")
                                             .size(15.0)
-                                            .color(Color32::from_rgb(154, 160, 166)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                     ui.add_space(4.0);
                                     ui.label(
@@ -1190,7 +1134,7 @@ impl BrowserRenderer {
                                             "Visited pages will automatically be indexed here.",
                                         )
                                         .size(12.0)
-                                        .color(Color32::from_rgb(154, 160, 166)),
+                                        .color(colors::TEXT_MUTED),
                                     );
                                 });
                             });
@@ -1198,8 +1142,8 @@ impl BrowserRenderer {
                         let mut delete_id = None;
                         for entry in &history_entries {
                             Frame::NONE
-                                .fill(Color32::from_rgb(32, 33, 36))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                                .fill(colors::CARD_BG)
+                                .stroke(Stroke::new(1.0_f32, colors::BORDER))
                                 .corner_radius(egui::CornerRadius::same(6))
                                 .inner_margin(Margin::symmetric(14, 10))
                                 .show(ui, |ui| {
@@ -1217,7 +1161,7 @@ impl BrowserRenderer {
                                         ui.label(
                                             RichText::new(format!("[{}]", tag))
                                                 .size(11.0)
-                                                .color(Color32::from_rgb(138, 180, 248))
+                                                .color(colors::ACCENT)
                                                 .strong(),
                                         );
 
@@ -1226,7 +1170,7 @@ impl BrowserRenderer {
                                                 RichText::new(&entry.title)
                                                     .size(14.0)
                                                     .strong()
-                                                    .color(Color32::from_rgb(241, 243, 244)),
+                                                    .color(colors::TEXT_PRIMARY),
                                             );
                                             if title_btn.clicked() {
                                                 *action = Some(BrowserAction::Navigate(
@@ -1237,7 +1181,7 @@ impl BrowserRenderer {
                                             ui.label(
                                                 RichText::new(&entry.url)
                                                     .size(11.5)
-                                                    .color(Color32::from_rgb(138, 180, 248)),
+                                                    .color(colors::TEXT_SECONDARY),
                                             );
                                         });
 
@@ -1250,10 +1194,10 @@ impl BrowserRenderer {
 
                                                 if entry.visit_count > 1 {
                                                     Frame::NONE
-                                                        .fill(Color32::from_rgb(40, 42, 45))
+                                                        .fill(colors::INPUT_BG)
                                                         .stroke(Stroke::new(
                                                             1.0_f32,
-                                                            Color32::from_rgb(60, 64, 67),
+                                                            colors::BORDER,
                                                         ))
                                                         .corner_radius(egui::CornerRadius::same(4))
                                                         .inner_margin(Margin::symmetric(6, 2))
@@ -1264,9 +1208,7 @@ impl BrowserRenderer {
                                                                     entry.visit_count
                                                                 ))
                                                                 .size(10.5)
-                                                                .color(Color32::from_rgb(
-                                                                    154, 160, 166,
-                                                                )),
+                                                                .color(colors::TEXT_MUTED),
                                                             );
                                                         });
                                                 }
@@ -1276,7 +1218,7 @@ impl BrowserRenderer {
                                                 ui.label(
                                                     RichText::new(time_str)
                                                         .size(11.0)
-                                                        .color(Color32::from_rgb(154, 160, 166)),
+                                                        .color(colors::TEXT_MUTED),
                                                 );
                                             },
                                         );
@@ -1315,15 +1257,15 @@ impl BrowserRenderer {
 
                     ui.horizontal(|ui| {
                         Frame::NONE
-                            .fill(Color32::from_rgb(40, 42, 45))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                            .fill(colors::TOOLBAR_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(6))
                             .inner_margin(Margin::symmetric(10, 4))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new("BOOKMARKS")
                                         .size(11.5)
-                                        .color(Color32::from_rgb(138, 180, 248))
+                                        .color(colors::ACCENT)
                                         .strong(),
                                 );
                             });
@@ -1332,7 +1274,7 @@ impl BrowserRenderer {
                         ui.label(
                             RichText::new("Bookmarks & Favorites")
                                 .size(22.0)
-                                .color(Color32::from_rgb(241, 243, 244))
+                                .color(colors::TEXT_PRIMARY)
                                 .strong(),
                         );
                     });
@@ -1341,8 +1283,8 @@ impl BrowserRenderer {
 
                     // Add Bookmark inline card
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::symmetric(16, 12))
                         .show(ui, |ui| {
@@ -1350,7 +1292,7 @@ impl BrowserRenderer {
                                 RichText::new("Add New Bookmark")
                                     .size(13.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(8.0);
 
@@ -1377,11 +1319,7 @@ impl BrowserRenderer {
                                 );
 
                                 if ui
-                                    .button(
-                                        RichText::new("+ Save")
-                                            .strong()
-                                            .color(Color32::from_rgb(138, 180, 248)),
-                                    )
+                                    .button(RichText::new("+ Save").strong().color(colors::ACCENT))
                                     .clicked()
                                 {
                                     let url = self.new_bookmark_url.trim();
@@ -1412,21 +1350,22 @@ impl BrowserRenderer {
 
                     for bm in &bookmarks {
                         Frame::NONE
-                            .fill(Color32::from_rgb(32, 33, 36))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                            .fill(colors::CARD_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(6))
                             .inner_margin(Margin::symmetric(14, 10))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(40, 42, 45))
+                                        .fill(colors::INPUT_BG)
+                                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                                         .corner_radius(egui::CornerRadius::same(4))
                                         .inner_margin(Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
                                             ui.label(
                                                 RichText::new(&bm.folder)
                                                     .size(10.0)
-                                                    .color(Color32::from_rgb(138, 180, 248))
+                                                    .color(colors::ACCENT)
                                                     .strong(),
                                             );
                                         });
@@ -1436,7 +1375,7 @@ impl BrowserRenderer {
                                             RichText::new(&bm.title)
                                                 .size(14.0)
                                                 .strong()
-                                                .color(Color32::from_rgb(241, 243, 244)),
+                                                .color(colors::TEXT_PRIMARY),
                                         );
                                         if title_btn.clicked() {
                                             *action = Some(BrowserAction::Navigate(bm.url.clone()));
@@ -1445,7 +1384,7 @@ impl BrowserRenderer {
                                         ui.label(
                                             RichText::new(&bm.url)
                                                 .size(11.5)
-                                                .color(Color32::from_rgb(138, 180, 248)),
+                                                .color(colors::TEXT_SECONDARY),
                                         );
                                     });
 
@@ -1495,15 +1434,15 @@ impl BrowserRenderer {
 
                     ui.horizontal(|ui| {
                         Frame::NONE
-                            .fill(Color32::from_rgb(40, 42, 45))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                            .fill(colors::TOOLBAR_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(6))
                             .inner_margin(Margin::symmetric(10, 4))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new("SETTINGS")
                                         .size(11.5)
-                                        .color(Color32::from_rgb(138, 180, 248))
+                                        .color(colors::ACCENT)
                                         .strong(),
                                 );
                             });
@@ -1512,7 +1451,7 @@ impl BrowserRenderer {
                         ui.label(
                             RichText::new("Browser Settings & System Preferences")
                                 .size(22.0)
-                                .color(Color32::from_rgb(241, 243, 244))
+                                .color(colors::TEXT_PRIMARY)
                                 .strong(),
                         );
                     });
@@ -1521,8 +1460,8 @@ impl BrowserRenderer {
 
                     // 1. Search Engine Preference
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1530,7 +1469,7 @@ impl BrowserRenderer {
                                 RichText::new("Default Search Engine")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(4.0);
                             ui.label(
@@ -1538,7 +1477,7 @@ impl BrowserRenderer {
                                     "Select the primary query provider used when entering non-URL terms in the omnibox.",
                                 )
                                 .size(12.0)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                             );
                             ui.add_space(10.0);
 
@@ -1565,8 +1504,8 @@ impl BrowserRenderer {
 
                     // 2. User-Agent Identity & Stealth Header
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1574,7 +1513,7 @@ impl BrowserRenderer {
                                 RichText::new("User-Agent Header & Browser Identity")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(4.0);
                             ui.label(
@@ -1582,7 +1521,7 @@ impl BrowserRenderer {
                                     "Configure client header identification sent during HTTP/1.1 and HTTP/2 handshakes.",
                                 )
                                 .size(12.0)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                             );
                             ui.add_space(10.0);
 
@@ -1614,8 +1553,8 @@ impl BrowserRenderer {
 
                     // 3. Tab Layout Mode
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1623,7 +1562,7 @@ impl BrowserRenderer {
                                 RichText::new("Tab Strip Layout")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(4.0);
                             ui.label(
@@ -1631,14 +1570,14 @@ impl BrowserRenderer {
                                     "Choose between standard horizontal top tabs or the modern vertical Zen sidebar.",
                                 )
                                 .size(12.0)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                             );
                             ui.add_space(10.0);
 
                             let current_layout = storage
                                 .get_browser_setting("tab_layout")
                                 .unwrap_or_default()
-                                .unwrap_or_else(|| "top".to_string());
+                                .unwrap_or_else(|| "sidebar".to_string());
 
                             ui.horizontal(|ui| {
                                 if ui
@@ -1666,8 +1605,8 @@ impl BrowserRenderer {
 
                     // 4. Default Content Zoom
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1675,7 +1614,7 @@ impl BrowserRenderer {
                                 RichText::new("Default Page Zoom")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(4.0);
                             ui.label(
@@ -1683,7 +1622,7 @@ impl BrowserRenderer {
                                     "Adjust default content rendering scale factor across tabs (fine-tune per tab with Ctrl++ and Ctrl+-).",
                                 )
                                 .size(12.0)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                             );
                             ui.add_space(10.0);
 
@@ -1731,13 +1670,13 @@ impl BrowserRenderer {
                             RichText::new("Excalibur")
                                 .size(40.0)
                                 .strong()
-                                .color(Color32::from_rgb(241, 243, 244)),
+                                .color(colors::TEXT_PRIMARY),
                         );
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new("Version 0.1.0 (Chrome Dark Minimalist Architecture)")
                                 .size(13.5)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_SECONDARY),
                         );
                         ui.add_space(4.0);
                         ui.label(
@@ -1745,7 +1684,7 @@ impl BrowserRenderer {
                                 "Independent Security Browser & Penetration Testing Workbench",
                             )
                             .size(13.0)
-                            .color(Color32::from_rgb(154, 160, 166)),
+                            .color(colors::TEXT_SECONDARY),
                         );
                     });
 
@@ -1753,8 +1692,8 @@ impl BrowserRenderer {
 
                     // Core Pillars Card
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1762,7 +1701,7 @@ impl BrowserRenderer {
                                 RichText::new("Engine Architecture & Guarantees")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(8.0);
 
@@ -1770,12 +1709,12 @@ impl BrowserRenderer {
                                 (
                                     "NON-CHROMIUM",
                                     "Zero dependencies on Google Chromium, CEF, WebKit, or Blink runtimes.",
-                                    Color32::from_rgb(138, 180, 248),
+                                    colors::ACCENT,
                                 ),
                                 (
                                     "PURE RUST DOM",
                                     "Custom semantic DOM parser and CSS style cascade resolver in safe Rust.",
-                                    Color32::from_rgb(52, 168, 83),
+                                    colors::SUCCESS,
                                 ),
                                 (
                                     "GPU ACCELERATED",
@@ -1785,12 +1724,12 @@ impl BrowserRenderer {
                                 (
                                     "SECURITY RADAR",
                                     "Embedded QuickJS client sink interception and RFC security header auditing.",
-                                    Color32::from_rgb(234, 67, 53),
+                                    colors::DANGER,
                                 ),
                                 (
                                     "MITM PROXY",
                                     "Integrated local proxy daemon on 127.0.0.1:8080 with on-the-fly CA generation.",
-                                    Color32::from_rgb(138, 180, 248),
+                                    colors::ACCENT,
                                 ),
                             ];
 
@@ -1805,7 +1744,7 @@ impl BrowserRenderer {
                                     ui.label(
                                         RichText::new(desc)
                                             .size(12.0)
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_PRIMARY),
                                     );
                                 });
                                 ui.add_space(4.0);
@@ -1816,8 +1755,8 @@ impl BrowserRenderer {
 
                     // Live Diagnostics Card
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::CARD_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(16))
                         .show(ui, |ui| {
@@ -1825,7 +1764,7 @@ impl BrowserRenderer {
                                 RichText::new("System Telemetry")
                                     .size(15.0)
                                     .strong()
-                                    .color(Color32::from_rgb(241, 243, 244)),
+                                    .color(colors::TEXT_PRIMARY),
                             );
                             ui.add_space(8.0);
 
@@ -1841,29 +1780,29 @@ impl BrowserRenderer {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Database Storage:")
-                                        .color(Color32::from_rgb(154, 160, 166)),
+                                        .color(colors::TEXT_SECONDARY),
                                 );
                                 ui.label(
                                     RichText::new("SQLite 3 with WAL & FTS5 (High-Performance)")
-                                        .color(Color32::from_rgb(138, 180, 248)),
+                                        .color(colors::ACCENT),
                                 );
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Saved Bookmarks:")
-                                        .color(Color32::from_rgb(154, 160, 166)),
+                                        .color(colors::TEXT_SECONDARY),
                                 );
                                 ui.label(
                                     RichText::new(format!("{} entries", bookmark_count))
-                                        .color(Color32::from_rgb(52, 168, 83)),
+                                        .color(colors::SUCCESS),
                                 );
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Recent History Log:")
-                                        .color(Color32::from_rgb(154, 160, 166)),
+                                        .color(colors::TEXT_SECONDARY),
                                 );
                                 ui.label(
                                     RichText::new(format!("{} items loaded", history_count))
@@ -1874,11 +1813,11 @@ impl BrowserRenderer {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Repository:")
-                                        .color(Color32::from_rgb(154, 160, 166)),
+                                        .color(colors::TEXT_SECONDARY),
                                 );
                                 ui.label(
                                     RichText::new("https://github.com/Zeo120/Excalibur")
-                                        .color(Color32::from_rgb(138, 180, 248)),
+                                        .color(colors::ACCENT),
                                 );
                             });
                         });
@@ -2708,15 +2647,15 @@ impl BrowserRenderer {
 
                         // YouTube Top Navigation & Search Bar
                         Frame::NONE
-                            .fill(Color32::from_rgb(32, 33, 36))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                            .fill(colors::TOOLBAR_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(8))
                             .inner_margin(Margin::symmetric(14, 10))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     // Brand Pill
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(255, 0, 0))
+                                        .fill(colors::YOUTUBE_RED)
                                         .corner_radius(egui::CornerRadius::same(4))
                                         .inner_margin(Margin::symmetric(8, 3))
                                         .show(ui, |ui| {
@@ -2750,7 +2689,7 @@ impl BrowserRenderer {
                                     );
 
                                     if (te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                                        || ui.button(RichText::new("Search").color(Color32::from_rgb(138, 180, 248)).strong()).clicked()
+                                        || ui.button(RichText::new("Search").color(colors::ACCENT).strong()).clicked()
                                     {
                                         let q = yt_search_val.trim();
                                         if !q.is_empty() {
@@ -2934,8 +2873,8 @@ impl BrowserRenderer {
         action: &mut Option<BrowserAction>,
     ) {
         Frame::NONE
-            .fill(Color32::from_rgb(32, 33, 36))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+            .fill(colors::CARD_BG)
+            .stroke(Stroke::new(1.0_f32, colors::BORDER))
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(Margin::symmetric(10, 10))
             .show(ui, |ui| {
@@ -2961,7 +2900,7 @@ impl BrowserRenderer {
                 }
 
                 let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 6.0, Color32::from_rgb(18, 18, 18));
+                painter.rect_filled(rect, 6.0, colors::INPUT_BG);
 
                 if let Some(tex) = thumb_opt {
                     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -2971,7 +2910,7 @@ impl BrowserRenderer {
                     painter.rect_stroke(
                         rect,
                         6.0,
-                        Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)),
+                        Stroke::new(1.0_f32, colors::BORDER),
                         egui::StrokeKind::Inside,
                     );
                     painter.text(
@@ -2979,7 +2918,7 @@ impl BrowserRenderer {
                         egui::Align2::CENTER_CENTER,
                         "[ Play ]",
                         egui::FontId::proportional(14.0),
-                        Color32::from_rgb(138, 180, 248),
+                        colors::ACCENT,
                     );
                 }
 
@@ -3007,7 +2946,7 @@ impl BrowserRenderer {
                         egui::Align2::CENTER_CENTER,
                         &video.duration,
                         egui::FontId::monospace(10.0),
-                        Color32::from_rgb(241, 243, 244),
+                        colors::TEXT_PRIMARY,
                     );
                 }
 
@@ -3023,7 +2962,7 @@ impl BrowserRenderer {
                     RichText::new(title_text)
                         .size(13.0)
                         .strong()
-                        .color(Color32::from_rgb(241, 243, 244)),
+                        .color(colors::TEXT_PRIMARY),
                 );
                 if title_btn.clicked() {
                     *action = Some(BrowserAction::Navigate(format!(
@@ -3038,7 +2977,7 @@ impl BrowserRenderer {
                     ui.label(
                         RichText::new(&video.channel)
                             .size(11.5)
-                            .color(Color32::from_rgb(154, 160, 166))
+                            .color(colors::TEXT_SECONDARY)
                             .strong(),
                     );
 
@@ -3046,7 +2985,7 @@ impl BrowserRenderer {
                         ui.label(
                             RichText::new(format!("- {}", video.views))
                                 .size(11.0)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_MUTED),
                         );
                     }
                 });
@@ -3058,7 +2997,7 @@ impl BrowserRenderer {
                         .button(
                             RichText::new("Watch")
                                 .size(11.0)
-                                .color(Color32::from_rgb(138, 180, 248))
+                                .color(colors::ACCENT)
                                 .strong(),
                         )
                         .clicked()
@@ -3073,7 +3012,7 @@ impl BrowserRenderer {
                         .small_button(
                             RichText::new("Copy Link")
                                 .size(10.5)
-                                .color(Color32::from_rgb(154, 160, 166)),
+                                .color(colors::TEXT_MUTED),
                         )
                         .clicked()
                     {
@@ -3125,8 +3064,8 @@ impl BrowserRenderer {
         let screen_h = (player_w * 9.0 / 16.0).clamp(240.0, 530.0);
 
         Frame::NONE
-            .fill(Color32::from_rgb(18, 18, 18))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+            .fill(colors::SIDEBAR_BG)
+            .stroke(Stroke::new(1.0_f32, colors::BORDER))
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(Margin::symmetric(14, 12))
             .show(ui, |ui| {
@@ -3146,7 +3085,7 @@ impl BrowserRenderer {
                     }
 
                     let painter = ui.painter_at(screen_rect);
-                    painter.rect_filled(screen_rect, 8.0, Color32::from_rgb(0, 0, 0));
+                    painter.rect_filled(screen_rect, 8.0, colors::CANVAS_BG);
 
                     // Thumbnail / Poster Frame
                     let thumb_url =
@@ -3170,9 +3109,9 @@ impl BrowserRenderer {
 
                     // Top Overlay: Status & Resolution Badge
                     let (status_text, status_col) = if self.player_state.is_playing {
-                        ("[LIVE STREAMING]", Color32::from_rgb(234, 67, 53))
+                        ("[LIVE STREAMING]", colors::DANGER)
                     } else {
-                        ("[PAUSED]", Color32::from_rgb(154, 160, 166))
+                        ("[PAUSED]", colors::TEXT_MUTED)
                     };
                     painter.text(
                         egui::pos2(screen_rect.min.x + 12.0, screen_rect.min.y + 12.0),
@@ -3186,7 +3125,7 @@ impl BrowserRenderer {
                         egui::Align2::RIGHT_TOP,
                         &self.player_state.quality,
                         egui::FontId::monospace(10.5),
-                        Color32::from_rgb(138, 180, 248),
+                        colors::ACCENT,
                     );
 
                     // Center Play/Pause Indicator (shows on hover or when paused)
@@ -3195,7 +3134,7 @@ impl BrowserRenderer {
                         painter.circle_filled(
                             center,
                             28.0,
-                            Color32::from_rgba_unmultiplied(32, 33, 36, 210),
+                            Color32::from_rgba_unmultiplied(22, 25, 32, 210),
                         );
                         let sym = if self.player_state.is_playing {
                             "||"
@@ -3207,7 +3146,7 @@ impl BrowserRenderer {
                             egui::Align2::CENTER_CENTER,
                             sym,
                             egui::FontId::proportional(22.0),
-                            Color32::from_rgb(241, 243, 244),
+                            colors::TEXT_PRIMARY,
                         );
                     }
 
@@ -3231,7 +3170,7 @@ impl BrowserRenderer {
                         painter.rect_filled(
                             bar_rect,
                             1.5,
-                            Color32::from_rgba_unmultiplied(138, 180, 248, 180),
+                            Color32::from_rgba_unmultiplied(88, 166, 255, 180),
                         );
                     }
 
@@ -3248,7 +3187,7 @@ impl BrowserRenderer {
                         egui::pos2(timeline_rect.min.x, bar_y - 2.5),
                         egui::pos2(timeline_rect.max.x, bar_y + 2.5),
                     );
-                    t_painter.rect_filled(bar_track, 2.5, Color32::from_rgb(60, 64, 67));
+                    t_painter.rect_filled(bar_track, 2.5, colors::BORDER);
 
                     // Buffered indicator
                     let buf_pct = ((self.player_state.current_time * 1.35 + 25.0)
@@ -3258,7 +3197,7 @@ impl BrowserRenderer {
                         egui::pos2(timeline_rect.min.x, bar_y - 2.5),
                         egui::pos2(timeline_rect.min.x + player_w * buf_pct, bar_y + 2.5),
                     );
-                    t_painter.rect_filled(buf_track, 2.5, Color32::from_rgb(95, 99, 104));
+                    t_painter.rect_filled(buf_track, 2.5, colors::BORDER_LIGHT);
 
                     // Played progress indicator (YouTube Red #ff0000)
                     let play_pct = (self.player_state.current_time / self.player_state.duration)
@@ -3267,7 +3206,7 @@ impl BrowserRenderer {
                         egui::pos2(timeline_rect.min.x, bar_y - 2.5),
                         egui::pos2(timeline_rect.min.x + player_w * play_pct, bar_y + 2.5),
                     );
-                    t_painter.rect_filled(played_track, 2.5, Color32::from_rgb(255, 0, 0));
+                    t_painter.rect_filled(played_track, 2.5, colors::YOUTUBE_RED);
 
                     // Scrubber thumb
                     let thumb_x = timeline_rect.min.x + player_w * play_pct;
@@ -3301,8 +3240,8 @@ impl BrowserRenderer {
 
                     // 3. Media Controls Bar
                     Frame::NONE
-                        .fill(Color32::from_rgb(32, 33, 36))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                        .fill(colors::TOOLBAR_BG)
+                        .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(6))
                         .inner_margin(Margin::symmetric(10, 6))
                         .show(ui, |ui| {
@@ -3317,7 +3256,7 @@ impl BrowserRenderer {
                                     .button(
                                         RichText::new(play_label)
                                             .size(12.0)
-                                            .color(Color32::from_rgb(138, 180, 248))
+                                            .color(colors::ACCENT)
                                             .strong(),
                                     )
                                     .clicked()
@@ -3352,7 +3291,7 @@ impl BrowserRenderer {
                                 ui.label(
                                     RichText::new(format!("{} / {}", cur_clock, total_clock))
                                         .size(11.5)
-                                        .color(Color32::from_rgb(218, 220, 224))
+                                        .color(colors::TEXT_PRIMARY)
                                         .monospace(),
                                 );
 
@@ -3377,7 +3316,7 @@ impl BrowserRenderer {
                                             .button(
                                                 RichText::new(spd_text)
                                                     .size(11.0)
-                                                    .color(Color32::from_rgb(138, 180, 248)),
+                                                    .color(colors::ACCENT),
                                             )
                                             .on_hover_text("Playback Speed (Click to cycle)")
                                             .clicked()
@@ -3439,7 +3378,7 @@ impl BrowserRenderer {
                                                 }
                                             ))
                                             .size(10.5)
-                                            .color(Color32::from_rgb(154, 160, 166))
+                                            .color(colors::TEXT_MUTED)
                                             .monospace(),
                                         );
 
@@ -3485,7 +3424,7 @@ impl BrowserRenderer {
                         RichText::new(&watch.title)
                             .size(17.0)
                             .strong()
-                            .color(Color32::from_rgb(241, 243, 244)),
+                            .color(colors::TEXT_PRIMARY),
                     );
 
                     ui.add_space(4.0);
@@ -3494,20 +3433,20 @@ impl BrowserRenderer {
                         ui.label(
                             RichText::new(&watch.author)
                                 .size(13.0)
-                                .color(Color32::from_rgb(138, 180, 248))
+                                .color(colors::ACCENT)
                                 .strong(),
                         );
 
                         Frame::NONE
-                            .fill(Color32::from_rgb(40, 42, 45))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                            .fill(colors::INPUT_BG)
+                            .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(4))
                             .inner_margin(Margin::symmetric(5, 1))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new("VERIFIED")
                                         .size(9.5)
-                                        .color(Color32::from_rgb(154, 160, 166))
+                                        .color(colors::TEXT_MUTED)
                                         .strong(),
                                 );
                             });
@@ -3516,7 +3455,7 @@ impl BrowserRenderer {
                             ui.label(
                                 RichText::new(format!("- {} views", watch.views))
                                     .size(12.0)
-                                    .color(Color32::from_rgb(154, 160, 166)),
+                                    .color(colors::TEXT_MUTED),
                             );
                         }
                     });
@@ -3531,11 +3470,7 @@ impl BrowserRenderer {
                             "Show description"
                         };
                         if ui
-                            .link(
-                                RichText::new(toggle_lbl)
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(138, 180, 248)),
-                            )
+                            .link(RichText::new(toggle_lbl).size(11.5).color(colors::ACCENT))
                             .clicked()
                         {
                             self.player_state.description_expanded = !is_expanded;
@@ -3544,15 +3479,15 @@ impl BrowserRenderer {
                         if self.player_state.description_expanded {
                             ui.add_space(4.0);
                             Frame::NONE
-                                .fill(Color32::from_rgb(32, 33, 36))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                                .fill(colors::CARD_BG)
+                                .stroke(Stroke::new(1.0_f32, colors::BORDER))
                                 .corner_radius(egui::CornerRadius::same(6))
                                 .inner_margin(Margin::same(10))
                                 .show(ui, |ui| {
                                     ui.label(
                                         RichText::new(&watch.description)
                                             .size(11.5)
-                                            .color(Color32::from_rgb(218, 220, 224)),
+                                            .color(colors::TEXT_SECONDARY),
                                     );
                                 });
                         }
@@ -3567,7 +3502,7 @@ impl BrowserRenderer {
                             RichText::new("Up Next Videos")
                                 .size(14.0)
                                 .strong()
-                                .color(Color32::from_rgb(241, 243, 244)),
+                                .color(colors::TEXT_PRIMARY),
                         );
                         ui.add_space(6.0);
 
@@ -3604,31 +3539,6 @@ impl BrowserRenderer {
                 });
             });
     }
-}
-
-fn render_stage_badge(ui: &mut Ui, label: &str, active: bool) {
-    let (bg, border, fg) = if active {
-        (
-            Color32::from_rgb(40, 42, 45),
-            Color32::from_rgb(60, 64, 67),
-            Color32::from_rgb(138, 180, 248),
-        )
-    } else {
-        (
-            Color32::from_rgb(32, 33, 36),
-            Color32::from_rgb(48, 51, 56),
-            Color32::from_rgb(154, 160, 166),
-        )
-    };
-
-    Frame::NONE
-        .fill(bg)
-        .stroke(Stroke::new(1.0_f32, border))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(6, 2))
-        .show(ui, |ui| {
-            ui.label(RichText::new(label).size(10.0).color(fg).strong());
-        });
 }
 
 pub fn extract_youtube_videos(html: &str) -> Vec<YouTubeVideoItem> {
