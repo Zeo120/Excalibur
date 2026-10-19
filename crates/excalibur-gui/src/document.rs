@@ -96,7 +96,7 @@ fn title_from_url(url: &str) -> String {
     parsed
         .path_segments()
         .and_then(|mut segs| segs.rfind(|s| !s.is_empty()))
-        .map(|s| percent_encoding_decode(s))
+        .map(percent_encoding_decode)
         .or_else(|| parsed.host_str().map(str::to_string))
         .unwrap_or_else(|| url.to_string())
 }
