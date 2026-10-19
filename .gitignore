@@ -1,6 +1,7 @@
 # Rust
 /target/
 /target_gui/
+/target_test_gui/
 **/*.rs.bk
 Cargo.lock.bak
 

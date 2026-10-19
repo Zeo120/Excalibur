@@ -459,17 +459,19 @@ impl BrowserRenderer {
                 .show(ui, |ui| {
                     ui.add_space(12.0);
                     let available_width = ui.available_width();
-                    let content_width = (available_width.min(1280.0) * self.zoom.clamp(0.6, 2.5))
-                        .min(available_width);
-                    let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+                    let min_margin = 16.0_f32;
+                    let max_content = (available_width - 2.0 * min_margin).max(240.0);
+                    let content_width =
+                        (max_content.min(1280.0) * self.zoom.clamp(0.6, 2.5)).min(max_content);
+                    let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
                     ui.horizontal(|ui| {
                         ui.add_space(side_margin);
                         ui.vertical(|ui| {
+                            ui.set_width(content_width);
                             ui.set_max_width(content_width);
                             self.render_node(ui, root, &mut action, url, &stylesheet);
                         });
-                        ui.add_space(side_margin);
                     });
                     ui.add_space(32.0);
                 });
@@ -596,41 +598,47 @@ impl BrowserRenderer {
 
     fn render_speed_dial(&mut self, ui: &mut Ui, action: &mut Option<BrowserAction>) {
         ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(32.0);
+            ui.add_space(28.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(960.0);
-            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+            let min_margin = 16.0_f32;
+            let max_content = (available_width - 2.0 * min_margin).max(260.0);
+            let content_width = max_content.min(880.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
             ui.horizontal(|ui| {
                 ui.add_space(side_margin);
                 ui.vertical(|ui| {
+                    ui.set_width(content_width);
                     ui.set_max_width(content_width);
 
                     // 1. Centered Wordmark & Subtitle
                     ui.vertical_centered(|ui| {
                         ui.label(
                             RichText::new("Excalibur")
-                                .size(44.0)
+                                .size(42.0)
                                 .strong()
                                 .color(colors::TEXT_PRIMARY),
                         );
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new("Fast, minimal, security-first web architecture")
-                                .size(13.5)
+                                .size(13.0)
                                 .color(colors::TEXT_SECONDARY),
                         );
                         ui.add_space(12.0);
 
                         // Navigation link row
+                        let nav_links = [
+                            ("History", "excalibur://history"),
+                            ("Bookmarks", "excalibur://bookmarks"),
+                            ("Settings", "excalibur://settings"),
+                            ("About", "excalibur://about"),
+                        ];
+                        let nav_row_w = 270.0_f32;
+                        let nav_offset = ((content_width - nav_row_w) / 2.0).max(0.0);
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(12.0, 0.0);
-                            let nav_links = [
-                                ("History", "excalibur://history"),
-                                ("Bookmarks", "excalibur://bookmarks"),
-                                ("Settings", "excalibur://settings"),
-                                ("About", "excalibur://about"),
-                            ];
+                            ui.add_space(nav_offset);
+                            ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
                             for (label, uri) in nav_links {
                                 if ui
                                     .button(
@@ -646,16 +654,19 @@ impl BrowserRenderer {
 
                     ui.add_space(24.0);
 
-                    // 2. Search Pill (580px width, 12px corner radius)
+                    // 2. Search Pill (shrinkable to fit parent container)
                     ui.vertical_centered(|ui| {
-                        let search_box_width = content_width.min(580.0);
+                        let search_box_outer_w = content_width.min(540.0);
+                        let h_pad = 14.0_f32;
+                        let search_box_inner_w = (search_box_outer_w - 2.0 * h_pad).max(180.0);
+
                         Frame::NONE
                             .fill(colors::INPUT_BG)
                             .stroke(Stroke::new(1.0_f32, colors::BORDER))
                             .corner_radius(egui::CornerRadius::same(12))
-                            .inner_margin(Margin::symmetric(16, 9))
+                            .inner_margin(Margin::symmetric(14, 8))
                             .show(ui, |ui| {
-                                ui.set_width(search_box_width);
+                                ui.set_width(search_box_inner_w);
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new("Search")
@@ -664,7 +675,7 @@ impl BrowserRenderer {
                                     );
                                     ui.add_space(4.0);
 
-                                    let input_w = (search_box_width - 110.0).max(180.0);
+                                    let input_w = (ui.available_width() - 55.0).max(60.0);
                                     let te = ui.add(
                                         egui::TextEdit::singleline(&mut self.speed_dial_input)
                                             .hint_text("Search Google or type a URL")
@@ -703,54 +714,66 @@ impl BrowserRenderer {
 
                     ui.add_space(28.0);
 
-                    // 3. Circular Shortcut Tiles (8 Shortcuts)
-                    ui.vertical_centered(|ui| {
-                        let shortcuts: [(&str, &str, &str, Color32); 8] = [
-                            (
-                                "Google",
-                                "https://www.google.com",
-                                "G",
-                                Color32::from_rgb(234, 67, 53),
-                            ),
-                            (
-                                "YouTube",
-                                "https://www.youtube.com",
-                                "Y",
-                                colors::YOUTUBE_RED,
-                            ),
-                            ("GitHub", "https://github.com", "GH", colors::TEXT_PRIMARY),
-                            (
-                                "Hacker News",
-                                "https://news.ycombinator.com",
-                                "HN",
-                                Color32::from_rgb(255, 102, 0),
-                            ),
-                            ("OWASP", "https://owasp.org", "OW", colors::ACCENT),
-                            (
-                                "PortSwigger",
-                                "https://portswigger.net/web-security",
-                                "PS",
-                                Color32::from_rgb(251, 188, 4),
-                            ),
-                            (
-                                "MDN Docs",
-                                "https://developer.mozilla.org",
-                                "MDN",
-                                colors::SUCCESS,
-                            ),
-                            (
-                                "Wikipedia",
-                                "https://wikipedia.org",
-                                "W",
-                                colors::TEXT_SECONDARY,
-                            ),
-                        ];
+                    // 3. Circular Shortcut Tiles (wrapping & centered)
+                    let shortcuts: [(&str, &str, &str, Color32); 8] = [
+                        (
+                            "Google",
+                            "https://www.google.com",
+                            "G",
+                            Color32::from_rgb(234, 67, 53),
+                        ),
+                        (
+                            "YouTube",
+                            "https://www.youtube.com",
+                            "Y",
+                            colors::YOUTUBE_RED,
+                        ),
+                        ("GitHub", "https://github.com", "GH", colors::TEXT_PRIMARY),
+                        (
+                            "Hacker News",
+                            "https://news.ycombinator.com",
+                            "HN",
+                            Color32::from_rgb(255, 102, 0),
+                        ),
+                        ("OWASP", "https://owasp.org", "OW", colors::ACCENT),
+                        (
+                            "PortSwigger",
+                            "https://portswigger.net/web-security",
+                            "PS",
+                            Color32::from_rgb(251, 188, 4),
+                        ),
+                        (
+                            "MDN Docs",
+                            "https://developer.mozilla.org",
+                            "MDN",
+                            colors::SUCCESS,
+                        ),
+                        (
+                            "Wikipedia",
+                            "https://wikipedia.org",
+                            "W",
+                            colors::TEXT_SECONDARY,
+                        ),
+                    ];
 
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(16.0, 16.0);
-                            for (name, url, monogram, col) in shortcuts {
+                    let tile_w = 66.0_f32;
+                    let tile_gap = 12.0_f32;
+                    let num_cols = (((content_width + tile_gap) / (tile_w + tile_gap)).floor()
+                        as usize)
+                        .clamp(1, 8);
+
+                    for chunk in shortcuts.chunks(num_cols) {
+                        let row_w = chunk.len() as f32 * tile_w
+                            + (chunk.len().saturating_sub(1)) as f32 * tile_gap;
+                        let row_offset = ((content_width - row_w) / 2.0).max(0.0);
+
+                        ui.horizontal(|ui| {
+                            ui.add_space(row_offset);
+                            ui.spacing_mut().item_spacing = egui::vec2(tile_gap, 0.0);
+
+                            for (name, url, monogram, col) in chunk {
                                 let (tile_rect, tile_resp) = ui.allocate_exact_size(
-                                    egui::vec2(68.0, 78.0),
+                                    egui::vec2(tile_w, 76.0),
                                     egui::Sense::click(),
                                 );
 
@@ -760,7 +783,6 @@ impl BrowserRenderer {
 
                                 let painter = ui.painter_at(tile_rect);
 
-                                // Background hover card
                                 if tile_resp.hovered() {
                                     painter.rect_filled(
                                         tile_rect,
@@ -769,43 +791,41 @@ impl BrowserRenderer {
                                     );
                                 }
 
-                                // 48px Circular shortcut tile
                                 let circle_center =
-                                    egui::pos2(tile_rect.center().x, tile_rect.min.y + 28.0);
+                                    egui::pos2(tile_rect.center().x, tile_rect.min.y + 26.0);
                                 let circle_bg = if tile_resp.hovered() {
                                     colors::BORDER_LIGHT
                                 } else {
                                     colors::CARD_BG
                                 };
-                                painter.circle_filled(circle_center, 24.0, circle_bg);
+                                painter.circle_filled(circle_center, 22.0, circle_bg);
                                 painter.circle_stroke(
                                     circle_center,
-                                    24.0,
+                                    22.0,
                                     Stroke::new(1.0_f32, colors::BORDER),
                                 );
 
-                                // Monogram
                                 painter.text(
                                     circle_center,
                                     egui::Align2::CENTER_CENTER,
-                                    monogram,
-                                    egui::FontId::proportional(12.5),
-                                    col,
+                                    *monogram,
+                                    egui::FontId::proportional(12.0),
+                                    *col,
                                 );
 
-                                // Shortcut label text
                                 painter.text(
                                     egui::pos2(tile_rect.center().x, tile_rect.max.y - 10.0),
                                     egui::Align2::CENTER_CENTER,
-                                    name,
+                                    *name,
                                     egui::FontId::proportional(11.0),
                                     colors::TEXT_SECONDARY,
                                 );
                             }
                         });
-                    });
+                        ui.add_space(10.0);
+                    }
 
-                    ui.add_space(32.0);
+                    ui.add_space(28.0);
 
                     // 4. Categorized Speed Dial Targets
                     let categories = [
@@ -881,6 +901,17 @@ impl BrowserRenderer {
                         ),
                     ];
 
+                    let use_two_cols = content_width >= 580.0;
+                    let chunk_size = if use_two_cols { 2 } else { 1 };
+                    let gap = 12.0_f32;
+                    let card_outer_w = if use_two_cols {
+                        ((content_width - gap) / 2.0).floor()
+                    } else {
+                        content_width
+                    };
+                    let card_padding_h = 14.0_f32;
+                    let card_inner_w = (card_outer_w - 2.0 * card_padding_h).max(100.0);
+
                     for (cat_name, targets) in categories {
                         ui.label(
                             RichText::new(cat_name)
@@ -890,17 +921,9 @@ impl BrowserRenderer {
                         );
                         ui.add_space(8.0);
 
-                        let use_two_cols = content_width >= 620.0;
-                        let chunk_size = if use_two_cols { 2 } else { 1 };
-                        let col_w = if use_two_cols {
-                            ((content_width - 12.0) / 2.0).floor()
-                        } else {
-                            content_width
-                        };
-
                         for chunk in targets.chunks(chunk_size) {
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(12.0, 0.0);
+                                ui.spacing_mut().item_spacing = egui::vec2(gap, 0.0);
                                 for &(name, url, desc) in chunk {
                                     let card_resp = Frame::NONE
                                         .fill(colors::CARD_BG)
@@ -908,10 +931,12 @@ impl BrowserRenderer {
                                         .corner_radius(egui::CornerRadius::same(8))
                                         .inner_margin(Margin::symmetric(14, 10))
                                         .show(ui, |ui| {
-                                            ui.set_width(col_w);
-                                            ui.set_min_height(64.0);
+                                            ui.set_width(card_inner_w);
+                                            ui.set_min_height(60.0);
                                             ui.horizontal(|ui| {
+                                                let text_w = (card_inner_w - 55.0).max(60.0);
                                                 ui.vertical(|ui| {
+                                                    ui.set_max_width(text_w);
                                                     ui.label(
                                                         RichText::new(name)
                                                             .size(13.0)
@@ -966,70 +991,139 @@ impl BrowserRenderer {
                     }
 
                     // 5. Engine Telemetry Panel
+                    let panel_inner_w = (content_width - 24.0).max(100.0);
                     Frame::NONE
                         .fill(colors::SIDEBAR_BG)
                         .stroke(Stroke::new(1.0_f32, colors::BORDER))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(Margin::same(12))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new("ENGINE TELEMETRY")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(colors::TEXT_MUTED),
-                                    );
-                                    ui.label(
-                                        RichText::new("Hyper + Rustls 0.23 (TLS 1.3)")
-                                            .color(colors::TEXT_SECONDARY),
-                                    );
+                            ui.set_width(panel_inner_w);
+                            if content_width >= 640.0 {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new("ENGINE TELEMETRY")
+                                                .size(10.0)
+                                                .strong()
+                                                .color(colors::TEXT_MUTED),
+                                        );
+                                        ui.label(
+                                            RichText::new("Hyper + Rustls (TLS 1.3)")
+                                                .size(11.0)
+                                                .color(colors::TEXT_SECONDARY),
+                                        );
+                                    });
+                                    ui.separator();
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new("MITM PROXY")
+                                                .size(10.0)
+                                                .strong()
+                                                .color(colors::ACCENT),
+                                        );
+                                        ui.label(
+                                            RichText::new("127.0.0.1:8080 (Listening)")
+                                                .size(11.0)
+                                                .color(colors::TEXT_SECONDARY),
+                                        );
+                                    });
+                                    ui.separator();
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new("DOM PARSER")
+                                                .size(10.0)
+                                                .strong()
+                                                .color(colors::SUCCESS),
+                                        );
+                                        ui.label(
+                                            RichText::new("Semantic AST")
+                                                .size(11.0)
+                                                .color(colors::TEXT_SECONDARY),
+                                        );
+                                    });
+                                    ui.separator();
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new("SECURITY ENGINE")
+                                                .size(10.0)
+                                                .strong()
+                                                .color(colors::DANGER),
+                                        );
+                                        ui.label(
+                                            RichText::new("Passive Radar + X-Mode")
+                                                .size(11.0)
+                                                .color(colors::TEXT_SECONDARY),
+                                        );
+                                    });
                                 });
-                                ui.separator();
+                            } else {
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new("MITM PROXY")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(colors::ACCENT),
-                                    );
-                                    ui.label(
-                                        RichText::new("127.0.0.1:8080 (Listening)")
-                                            .color(colors::TEXT_SECONDARY),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("ENGINE TELEMETRY")
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(colors::TEXT_MUTED),
+                                            );
+                                            ui.label(
+                                                RichText::new("Hyper + Rustls (TLS 1.3)")
+                                                    .size(11.0)
+                                                    .color(colors::TEXT_SECONDARY),
+                                            );
+                                        });
+                                        ui.separator();
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("MITM PROXY")
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(colors::ACCENT),
+                                            );
+                                            ui.label(
+                                                RichText::new("127.0.0.1:8080")
+                                                    .size(11.0)
+                                                    .color(colors::TEXT_SECONDARY),
+                                            );
+                                        });
+                                    });
+                                    ui.separator();
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("DOM PARSER")
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(colors::SUCCESS),
+                                            );
+                                            ui.label(
+                                                RichText::new("Semantic AST")
+                                                    .size(11.0)
+                                                    .color(colors::TEXT_SECONDARY),
+                                            );
+                                        });
+                                        ui.separator();
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("SECURITY ENGINE")
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(colors::DANGER),
+                                            );
+                                            ui.label(
+                                                RichText::new("Passive Radar + X-Mode")
+                                                    .size(11.0)
+                                                    .color(colors::TEXT_SECONDARY),
+                                            );
+                                        });
+                                    });
                                 });
-                                ui.separator();
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new("DOM PARSER")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(colors::SUCCESS),
-                                    );
-                                    ui.label(
-                                        RichText::new("Pure-Rust Semantic AST")
-                                            .color(colors::TEXT_SECONDARY),
-                                    );
-                                });
-                                ui.separator();
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new("SECURITY ENGINE")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(colors::DANGER),
-                                    );
-                                    ui.label(
-                                        RichText::new("Passive Radar + X-Mode")
-                                            .color(colors::TEXT_SECONDARY),
-                                    );
-                                });
-                            });
+                            }
                         });
 
                     ui.add_space(32.0);
                 });
-                ui.add_space(side_margin);
             });
         });
     }
@@ -1043,12 +1137,15 @@ impl BrowserRenderer {
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(20.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(940.0);
-            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+            let min_margin = 16.0_f32;
+            let max_content = (available_width - 2.0 * min_margin).max(260.0);
+            let content_width = max_content.min(920.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
             ui.horizontal(|ui| {
                 ui.add_space(side_margin);
                 ui.vertical(|ui| {
+                    ui.set_width(content_width);
                     ui.set_max_width(content_width);
 
                     // Header row
@@ -1257,7 +1354,6 @@ impl BrowserRenderer {
                         }
                     }
                 });
-                ui.add_space(side_margin);
             });
             ui.add_space(32.0);
         });
@@ -1272,12 +1368,15 @@ impl BrowserRenderer {
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(20.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(940.0);
-            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+            let min_margin = 16.0_f32;
+            let max_content = (available_width - 2.0 * min_margin).max(260.0);
+            let content_width = max_content.min(920.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
             ui.horizontal(|ui| {
                 ui.add_space(side_margin);
                 ui.vertical(|ui| {
+                    ui.set_width(content_width);
                     ui.set_max_width(content_width);
 
                     ui.horizontal(|ui| {
@@ -1434,7 +1533,6 @@ impl BrowserRenderer {
                         let _ = storage.remove_browser_bookmark(&url);
                     }
                 });
-                ui.add_space(side_margin);
             });
             ui.add_space(32.0);
         });
@@ -1449,12 +1547,15 @@ impl BrowserRenderer {
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(20.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(940.0);
-            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+            let min_margin = 16.0_f32;
+            let max_content = (available_width - 2.0 * min_margin).max(260.0);
+            let content_width = max_content.min(920.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
             ui.horizontal(|ui| {
                 ui.add_space(side_margin);
                 ui.vertical(|ui| {
+                    ui.set_width(content_width);
                     ui.set_max_width(content_width);
 
                     ui.horizontal(|ui| {
@@ -1667,7 +1768,6 @@ impl BrowserRenderer {
                             });
                         });
                 });
-                ui.add_space(side_margin);
             });
             ui.add_space(32.0);
         });
@@ -1682,12 +1782,15 @@ impl BrowserRenderer {
         ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(20.0);
             let available_width = ui.available_width();
-            let content_width = available_width.min(940.0);
-            let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+            let min_margin = 16.0_f32;
+            let max_content = (available_width - 2.0 * min_margin).max(260.0);
+            let content_width = max_content.min(920.0);
+            let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
             ui.horizontal(|ui| {
                 ui.add_space(side_margin);
                 ui.vertical(|ui| {
+                    ui.set_width(content_width);
                     ui.set_max_width(content_width);
 
                     ui.vertical_centered(|ui| {
@@ -1847,7 +1950,6 @@ impl BrowserRenderer {
                             });
                         });
                 });
-                ui.add_space(side_margin);
             });
             ui.add_space(32.0);
         });
@@ -2662,12 +2764,15 @@ impl BrowserRenderer {
             .show(ui, |ui| {
                 ui.add_space(12.0);
                 let available_width = ui.available_width();
-                let content_width = available_width.min(1080.0);
-                let side_margin = ((available_width - content_width) / 2.0).max(16.0);
+                let min_margin = 16.0_f32;
+                let max_content = (available_width - 2.0 * min_margin).max(240.0);
+                let content_width = max_content.min(1080.0);
+                let side_margin = ((available_width - content_width) / 2.0).max(min_margin);
 
                 ui.horizontal(|ui| {
                     ui.add_space(side_margin);
                     ui.vertical(|ui| {
+                        ui.set_width(content_width);
                         ui.set_max_width(content_width);
 
                         // YouTube Top Navigation & Search Bar
@@ -2885,7 +2990,6 @@ impl BrowserRenderer {
                                 });
                         }
                     });
-                    ui.add_space(side_margin);
                 });
                 ui.add_space(32.0);
             });
@@ -3081,11 +3185,12 @@ impl BrowserRenderer {
         self.audio_engine.set_speed(self.player_state.speed);
 
         let available_w = ui.available_width();
-        let player_w = if self.player_state.theater_mode {
+        let player_outer_w = if self.player_state.theater_mode {
             available_w
         } else {
             available_w.min(940.0)
         };
+        let player_w = (player_outer_w - 28.0).max(200.0);
         let screen_h = (player_w * 9.0 / 16.0).clamp(240.0, 530.0);
 
         Frame::NONE
