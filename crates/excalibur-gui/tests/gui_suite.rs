@@ -695,3 +695,19 @@ async fn test_valid_png_loads() {
     let mut cache = ThumbnailCache::new();
     assert_eq!(settle_image(&mut cache, &url).await, ImageState::Ready);
 }
+
+#[test]
+fn test_nested_and_ordered_lists_render() {
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+    let html = r#"<html><body>
+        <ol start="2" type="i"><li>Two<ul><li>nested<ol reversed><li>a</li><li>b</li></ol></li></ul></li><li>Three</li></ol>
+        <ul><li>Bullet</li></ul>
+    </body></html>"#;
+    app.tabs[0].parsed_dom = Some(excalibur_dom::HtmlParser::parse(html));
+    app.tabs[0].raw_html = html.to_string();
+    app.tabs[0].url = "https://example.com/lists".to_string();
+    for _ in 0..2 {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.render_panels(ctx));
+    }
+}

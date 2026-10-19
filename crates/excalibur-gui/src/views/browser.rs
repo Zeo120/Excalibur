@@ -1,3 +1,4 @@
+use super::lists::{flatten_list, ListMarker};
 use crate::theme::colors;
 use crate::urls::{query_param, with_query_param, SearchEngine};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
@@ -1165,24 +1166,66 @@ impl BrowserRenderer {
                                 ui.label(RichText::new(text.trim()).italics().color(text_col));
                             });
                     }
-                    "ul" | "ol" => {
-                        ui.vertical(|ui| {
-                            for child in &node.children {
-                                if child.tag() == Some("li") {
-                                    let item_style = StyleResolver::resolve(child, stylesheet);
-                                    let item_text = child.text_content();
-                                    let item_color = item_style
-                                        .color
-                                        .or(style.color)
-                                        .map(to_egui_color)
-                                        .unwrap_or(colors::text());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("-").color(item_color));
-                                        ui.label(RichText::new(item_text.trim()).color(item_color));
-                                    });
+                    "ul" | "ol" | "menu" => {
+                        let text_color = style.color.map(to_egui_color).unwrap_or(colors::text());
+                        let font_size = style.font_size.unwrap_or(14.0);
+                        for item in flatten_list(node) {
+                            ui.horizontal_top(|ui| {
+                                ui.add_space(item.depth as f32 * 20.0);
+                                let (marker_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(26.0, font_size + 4.0),
+                                    egui::Sense::hover(),
+                                );
+                                match &item.marker {
+                                    ListMarker::Bullet => {
+                                        let c = egui::pos2(
+                                            marker_rect.right() - 8.0,
+                                            marker_rect.center().y,
+                                        );
+                                        let p = ui.painter();
+                                        match item.depth % 3 {
+                                            0 => p.circle_filled(c, 2.6, text_color),
+                                            1 => p.circle_stroke(
+                                                c,
+                                                2.6,
+                                                Stroke::new(1.2_f32, text_color),
+                                            ),
+                                            _ => p.rect_filled(
+                                                egui::Rect::from_center_size(
+                                                    c,
+                                                    egui::vec2(4.5, 4.5),
+                                                ),
+                                                0.0,
+                                                text_color,
+                                            ),
+                                        };
+                                    }
+                                    ListMarker::Label(label) => {
+                                        ui.painter().text(
+                                            egui::pos2(
+                                                marker_rect.right() - 4.0,
+                                                marker_rect.center().y,
+                                            ),
+                                            egui::Align2::RIGHT_CENTER,
+                                            label,
+                                            egui::FontId::proportional(font_size),
+                                            text_color,
+                                        );
+                                    }
                                 }
-                            }
-                        });
+                                ui.vertical(|ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&item.text)
+                                                .size(font_size)
+                                                .color(text_color),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                            });
+                        }
+                        ui.add_space(4.0);
                     }
                     "table" => {
                         let bg_col = style
