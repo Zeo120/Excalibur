@@ -711,3 +711,36 @@ fn test_nested_and_ordered_lists_render() {
         let _ = ctx.run(egui::RawInput::default(), |ctx| app.render_panels(ctx));
     }
 }
+
+// ───────────── Non-ASCII text must never be sliced mid-character ─────────────
+
+#[test]
+fn test_watch_link_scanner_handles_multibyte_text_after_link() {
+    // "/watch?v=" followed by fewer than 11 ASCII bytes and then Telugu text:
+    // byte offset start+11 falls inside a 3-byte character.
+    let html = "<a title=\"తెలుగు\" href=\"/watch?v=abcతెలుగు వీడియో\">x</a>";
+    let videos = excalibur_gui::views::browser::extract_youtube_videos(html);
+    assert!(videos.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_youtube_grid_renders_long_non_ascii_titles() {
+    // Long Telugu title (3-byte chars): byte 62 is not a char boundary.
+    let title = "తెలుగు వార్తలు ఈరోజు ముఖ్యాంశాలు మరియు తాజా సమాచారం ప్రత్యక్ష ప్రసారం";
+    assert!(title.len() > 65 && !title.is_char_boundary(62));
+    let html = format!(
+        r#"<html><head><script>var ytInitialData = {{"contents":{{"twoColumnSearchResultsRenderer":{{"primaryContents":{{"sectionListRenderer":{{"contents":[{{"itemSectionRenderer":{{"contents":[{{"videoRenderer":{{"videoId":"dQw4w9WgXcQ","title":{{"runs":[{{"text":"{title}"}}]}},"ownerText":{{"runs":[{{"text":"ఛానల్"}}]}},"lengthText":{{"simpleText":"3:33"}},"viewCountText":{{"simpleText":"1K views"}},"publishedTimeText":{{"simpleText":"1 day ago"}},"thumbnail":{{"thumbnails":[{{"url":"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"}}]}}}}}}]}}}}]}}}}}}}}}};</script></head><body></body></html>"#
+    );
+    let videos = excalibur_gui::views::browser::extract_youtube_videos(&html);
+    assert_eq!(videos.len(), 1);
+    assert_eq!(videos[0].title, title);
+
+    let ctx = egui::Context::default();
+    let mut app = create_test_app();
+    app.tabs[0].url = "https://www.youtube.com/results?search_query=telugu".to_string();
+    app.tabs[0].parsed_dom = Some(excalibur_dom::HtmlParser::parse(&html));
+    app.tabs[0].raw_html = html.clone();
+    for _ in 0..2 {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.render_panels(ctx));
+    }
+}

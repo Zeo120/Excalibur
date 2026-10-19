@@ -1712,11 +1712,8 @@ impl BrowserRenderer {
 
                 ui.add_space(8.0);
 
-                let title_text = if video.title.len() > 65 {
-                    format!("{}...", &video.title[..62])
-                } else {
-                    video.title.clone()
-                };
+                // Shorten by characters, never by bytes: titles are often non-ASCII.
+                let title_text = crate::icons::truncate_chars(&video.title, 65);
 
                 let title_btn = ui.link(
                     RichText::new(title_text)
@@ -2329,8 +2326,9 @@ pub fn extract_youtube_videos(html: &str) -> Vec<YouTubeVideoItem> {
         let mut idx = 0;
         while let Some(rel) = html[idx..].find("/watch?v=") {
             let start = idx + rel + 9;
-            if start + 11 <= html.len() {
-                let id = &html[start..start + 11];
+            // `get` yields None instead of panicking if the 11 bytes would split
+            // a multi-byte character.
+            if let Some(id) = html.get(start..start + 11) {
                 if id
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
