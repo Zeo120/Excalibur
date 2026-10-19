@@ -3,6 +3,7 @@
 pub mod app;
 pub mod audio;
 pub mod chrome;
+pub mod document;
 pub mod icons;
 pub mod theme;
 pub mod urls;

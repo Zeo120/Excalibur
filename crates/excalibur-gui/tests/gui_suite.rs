@@ -542,3 +542,56 @@ async fn test_closing_tab_cancels_its_request() {
         .expect("closed tab kept its request running")
         .unwrap();
 }
+
+// ───────────── Content types & encodings end to end (#16, #17) ─────────────
+
+/// Serves one fixed HTTP response to the first connection.
+async fn one_shot_server(response: Vec<u8>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = sock.read(&mut buf).await;
+        let _ = sock.write_all(&response).await;
+        let _ = sock.shutdown().await;
+    });
+    format!("http://{}/notes.txt", addr)
+}
+
+async fn load(app: &mut excalibur_gui::GuiApp, url: &str) {
+    app.navigate(1, url);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.tabs[0].is_loading {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "page never finished loading"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        app.poll_network_events();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_plain_text_page_is_decoded_and_not_parsed() {
+    let body: &[u8] = b"caf\xe9\n<script>alert(1)</script>";
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    let url = one_shot_server(response).await;
+
+    let mut app = create_test_app();
+    load(&mut app, &url).await;
+
+    let tab = &app.tabs[0];
+    assert!(tab.error_msg.is_none(), "{:?}", tab.error_msg);
+    assert_eq!(tab.title, "notes.txt");
+    assert_eq!(tab.raw_html, "café\n<script>alert(1)</script>");
+    let dom = tab.parsed_dom.as_ref().unwrap();
+    assert!(dom.find_by_tag("script").is_empty());
+    assert_eq!(dom.find_by_tag("pre")[0].text_content(), tab.raw_html);
+}

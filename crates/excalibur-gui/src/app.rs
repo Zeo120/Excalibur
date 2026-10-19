@@ -18,7 +18,7 @@ use excalibur_core::{
     network::HttpRequest,
     storage::{BrowserBookmarkEntry, OmniboxMatch, WorkspaceStorage},
 };
-use excalibur_dom::{DomNode, HtmlParser};
+use excalibur_dom::DomNode;
 use excalibur_script::{ExecutionLimits, JsCancelHandle, JsRuntime, SinkFinding};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -400,20 +400,20 @@ impl GuiApp {
 
                 match client.dispatch(&req).await {
                     Ok(res) => {
-                        let (body_str, _encoding) = excalibur_core::content::decode_text(
-                            &res.body,
+                        let doc_url = res
+                            .headers
+                            .get("x-final-url")
+                            .unwrap_or(&target_url)
+                            .to_string();
+                        let doc = crate::document::document_for_response(
+                            &doc_url,
                             res.headers.get("content-type"),
-                            true,
+                            &res.body,
                         );
-                        let dom = HtmlParser::parse(&body_str);
-
-                        // Extract title
-                        let title = dom
-                            .find_by_tag("title")
-                            .first()
-                            .map(|t| t.text_content().trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| target_url.clone());
+                        let is_html = doc.kind == excalibur_core::content::BodyKind::Html;
+                        let dom = doc.dom;
+                        let title = doc.title;
+                        let body_str = doc.source;
 
                         // Audit response
                         let is_https = target_url.starts_with("https://");
@@ -451,12 +451,15 @@ impl GuiApp {
                         // DOM XSS sink tracing runs on a blocking thread under
                         // QuickJS time/memory limits so page scripts can't stall
                         // the async runtime or loop forever.
-                        let scripts: Vec<String> = dom
-                            .find_by_tag("script")
-                            .iter()
-                            .map(|s| s.text_content())
-                            .filter(|c| !c.trim().is_empty())
-                            .collect();
+                        let scripts: Vec<String> = if is_html {
+                            dom.find_by_tag("script")
+                                .iter()
+                                .map(|s| s.text_content())
+                                .filter(|c| !c.trim().is_empty())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                         let audit_url = target_url.clone();
                         let sinks = tokio::task::spawn_blocking(move || {
                             audit_inline_scripts(
@@ -500,7 +503,11 @@ impl GuiApp {
                                 res.status,
                                 res.reason,
                                 res.headers.to_raw_string(),
-                                body_str
+                                if body_str.is_empty() && !res.body.is_empty() {
+                                    format!("[binary body: {} bytes]", res.body.len())
+                                } else {
+                                    body_str.clone()
+                                }
                             ),
                         };
 

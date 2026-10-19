@@ -112,9 +112,213 @@ pub fn decode_text(
     (text.into_owned(), used)
 }
 
+/// How a response body should be presented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyKind {
+    /// Parse and render as an HTML document.
+    Html,
+    /// Show as preformatted text (plain text, JSON, XML, CSS, JavaScript…).
+    Text { mime: String },
+    /// Show as an image.
+    Image { mime: String },
+    /// Cannot be displayed (PDF, archives, media, octet-stream…).
+    Other { mime: String },
+}
+
+/// MIME essence (`type/subtype`, lowercased, parameters removed).
+pub fn mime_essence(content_type: &str) -> String {
+    content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+/// Classifies a response. A declared `Content-Type` is trusted; sniffing is only
+/// used when it is absent, and never turns an unknown declared type into HTML.
+pub fn classify(content_type: Option<&str>, body: &[u8]) -> BodyKind {
+    let essence = content_type.map(mime_essence).unwrap_or_default();
+    if essence.is_empty() {
+        return sniff(body);
+    }
+    match essence.as_str() {
+        "text/html" | "application/xhtml+xml" => BodyKind::Html,
+        m if m.starts_with("image/") => BodyKind::Image { mime: essence },
+        m if m.starts_with("text/")
+            || m == "application/json"
+            || m == "application/javascript"
+            || m == "application/ecmascript"
+            || m == "application/xml"
+            || m.ends_with("+json")
+            || m.ends_with("+xml") =>
+        {
+            BodyKind::Text { mime: essence }
+        }
+        _ => BodyKind::Other { mime: essence },
+    }
+}
+
+/// Conservative sniffing for responses without a Content-Type.
+fn sniff(body: &[u8]) -> BodyKind {
+    const MAGIC: [(&[u8], &str); 6] = [
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"GIF87a", "image/gif"),
+        (b"GIF89a", "image/gif"),
+        (b"%PDF-", "application/pdf"),
+        (b"PK\x03\x04", "application/zip"),
+    ];
+    for (magic, mime) in MAGIC {
+        if body.starts_with(magic) {
+            return if mime.starts_with("image/") {
+                BodyKind::Image { mime: mime.into() }
+            } else {
+                BodyKind::Other { mime: mime.into() }
+            };
+        }
+    }
+    if body.len() >= 12 && &body[..4] == b"RIFF" && &body[8..12] == b"WEBP" {
+        return BodyKind::Image {
+            mime: "image/webp".into(),
+        };
+    }
+
+    let head = &body[..body.len().min(1024)];
+    let looks_binary = head
+        .iter()
+        .any(|&b| b == 0 || (b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c | 0x1b)));
+    if looks_binary {
+        return BodyKind::Other {
+            mime: "application/octet-stream".into(),
+        };
+    }
+
+    let start = head.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(head);
+    let trimmed = trim_ascii_start(start);
+    let lower: Vec<u8> = trimmed
+        .iter()
+        .take(64)
+        .map(|b| b.to_ascii_lowercase())
+        .collect();
+    const HTML_STARTS: [&[u8]; 6] = [
+        b"<!doctype html",
+        b"<html",
+        b"<head",
+        b"<body",
+        b"<!--",
+        b"<meta",
+    ];
+    if HTML_STARTS.iter().any(|p| lower.starts_with(p)) {
+        BodyKind::Html
+    } else {
+        BodyKind::Text {
+            mime: "text/plain".into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_types_are_trusted() {
+        assert_eq!(
+            classify(Some("text/html; charset=utf-8"), b"x"),
+            BodyKind::Html
+        );
+        assert_eq!(
+            classify(Some("Application/XHTML+XML"), b"x"),
+            BodyKind::Html
+        );
+        assert_eq!(
+            classify(Some("image/png"), b"not really"),
+            BodyKind::Image {
+                mime: "image/png".into()
+            }
+        );
+        for (ct, mime) in [
+            ("text/plain", "text/plain"),
+            ("application/json", "application/json"),
+            ("application/ld+json", "application/ld+json"),
+            ("text/css", "text/css"),
+            ("application/xml", "application/xml"),
+        ] {
+            assert_eq!(
+                classify(Some(ct), b"{}"),
+                BodyKind::Text { mime: mime.into() }
+            );
+        }
+        // Text served as plain text must never be treated as markup.
+        assert_eq!(
+            classify(Some("text/plain"), b"<html><script>alert(1)</script>"),
+            BodyKind::Text {
+                mime: "text/plain".into()
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_or_binary_types_are_not_rendered_as_html() {
+        for ct in [
+            "application/pdf",
+            "application/octet-stream",
+            "video/mp4",
+            "application/zip",
+        ] {
+            assert_eq!(
+                classify(Some(ct), b"<!DOCTYPE html><html>"),
+                BodyKind::Other { mime: ct.into() },
+                "{ct}"
+            );
+        }
+    }
+
+    #[test]
+    fn sniffing_without_content_type() {
+        assert_eq!(
+            classify(None, b"  <!DOCTYPE HTML><html></html>"),
+            BodyKind::Html
+        );
+        assert_eq!(classify(Some(""), b"\xef\xbb\xbf<html>"), BodyKind::Html);
+        assert_eq!(
+            classify(None, b"\x89PNG\r\n\x1a\n\0\0"),
+            BodyKind::Image {
+                mime: "image/png".into()
+            }
+        );
+        assert_eq!(
+            classify(None, b"RIFF\0\0\0\0WEBPVP8 "),
+            BodyKind::Image {
+                mime: "image/webp".into()
+            }
+        );
+        assert_eq!(
+            classify(None, b"%PDF-1.7"),
+            BodyKind::Other {
+                mime: "application/pdf".into()
+            }
+        );
+        assert_eq!(
+            classify(None, b"hello\nworld"),
+            BodyKind::Text {
+                mime: "text/plain".into()
+            }
+        );
+        assert_eq!(
+            classify(None, b"abc\0def"),
+            BodyKind::Other {
+                mime: "application/octet-stream".into()
+            }
+        );
+        assert_eq!(
+            classify(None, b""),
+            BodyKind::Text {
+                mime: "text/plain".into()
+            }
+        );
+    }
 
     fn html(body: &[u8], ct: Option<&str>) -> String {
         decode_text(body, ct, true).0
