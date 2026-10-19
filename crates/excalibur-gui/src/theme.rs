@@ -39,40 +39,40 @@ pub fn configure_fonts(ctx: &egui::Context) {
 pub fn apply_cyber_theme(ctx: &egui::Context) {
     let mut visuals = Visuals::dark();
 
-    // Elegant Minimalist Obsidian & Slate palette
-    visuals.panel_fill = Color32::from_rgb(11, 15, 23); // Primary panels, toolbars, sidebars
-    visuals.window_fill = Color32::from_rgb(15, 20, 31); // Elevated cards and modal surfaces
-    visuals.extreme_bg_color = Color32::from_rgb(7, 10, 16); // Deep viewport / code canvas
+    // Stock Chrome Dark Mode & Neutral Black palette
+    visuals.panel_fill = Color32::from_rgb(18, 18, 18); // #121212 Chrome top frame & tab strip
+    visuals.window_fill = Color32::from_rgb(32, 33, 36); // #202124 Chrome toolbar, cards, menus
+    visuals.extreme_bg_color = Color32::from_rgb(0, 0, 0); // #000000 Pure black webpage canvas
 
-    // Refined subtle borders (1px) with crisp contrast
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(15, 20, 31);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59));
+    // Refined subtle borders (1px) with crisp Chrome contrast
+    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(32, 33, 36);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56));
     visuals.widgets.noninteractive.fg_stroke =
-        Stroke::new(1.0_f32, Color32::from_rgb(226, 232, 240));
+        Stroke::new(1.0_f32, Color32::from_rgb(232, 234, 237));
     visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(20, 27, 42);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74));
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225));
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(40, 42, 45); // #282a2d
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67));
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(218, 220, 224));
     visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(28, 38, 59);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(53, 56, 61);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(95, 99, 104));
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.active.bg_fill = Color32::from_rgb(37, 99, 235);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250));
+    visuals.widgets.active.bg_fill = Color32::from_rgb(66, 70, 76);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(138, 180, 248)); // Chrome Soft Blue
     visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.widgets.open.bg_fill = Color32::from_rgb(24, 33, 51);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
+    visuals.widgets.open.bg_fill = Color32::from_rgb(45, 48, 52);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(138, 180, 248));
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
 
-    visuals.selection.bg_fill = Color32::from_rgb(30, 58, 138);
-    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
+    visuals.selection.bg_fill = Color32::from_rgb(37, 57, 88);
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(138, 180, 248));
 
     visuals.window_corner_radius = egui::CornerRadius::same(8);
     visuals.menu_corner_radius = egui::CornerRadius::same(6);

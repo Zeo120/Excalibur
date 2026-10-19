@@ -784,38 +784,40 @@ impl GuiApp {
             for tab in &self.tabs {
                 let is_active = tab.id == self.active_tab_id;
                 let bg_color = if is_active {
-                    Color32::from_rgb(20, 27, 42)
+                    Color32::from_rgb(32, 33, 36) // Chrome active tab matches toolbar (#202124)
                 } else {
-                    Color32::from_rgb(11, 15, 23)
+                    Color32::from_rgb(18, 18, 18) // Chrome inactive tab blends into window frame (#121212)
                 };
 
                 let stroke_color = if is_active {
-                    Color32::from_rgb(56, 189, 248)
+                    Color32::from_rgb(60, 64, 67) // Chrome subtle active tab border (#3c4043)
                 } else {
-                    Color32::from_rgb(30, 41, 59)
+                    Color32::from_rgb(28, 28, 28) // Inactive tab border
                 };
 
                 Frame::NONE
                     .fill(bg_color)
                     .stroke(Stroke::new(1.0_f32, stroke_color))
-                    .corner_radius(egui::CornerRadius::same(6))
-                    .inner_margin(Margin::symmetric(9, 4))
+                    .corner_radius(egui::CornerRadius {
+                        nw: 8,
+                        ne: 8,
+                        sw: 0,
+                        se: 0,
+                    })
+                    .inner_margin(Margin::symmetric(10, 5))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             let tag = site_pill_tag(&tab.url);
-                            let tag_color = site_pill_color(&tab.url);
                             Frame::NONE
-                                .fill(Color32::from_rgba_premultiplied(
-                                    tag_color.r() / 6,
-                                    tag_color.g() / 6,
-                                    tag_color.b() / 6,
-                                    255,
-                                ))
+                                .fill(Color32::from_rgb(48, 51, 56))
                                 .corner_radius(egui::CornerRadius::same(3))
                                 .inner_margin(Margin::symmetric(4, 1))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        RichText::new(tag).size(9.5).color(tag_color).strong(),
+                                        RichText::new(tag)
+                                            .size(9.0)
+                                            .color(Color32::from_rgb(189, 193, 198))
+                                            .strong(),
                                     );
                                 });
 
@@ -826,9 +828,9 @@ impl GuiApp {
                             };
 
                             let title_color = if is_active {
-                                Color32::WHITE
+                                Color32::from_rgb(241, 243, 244)
                             } else {
-                                Color32::from_rgb(148, 163, 184)
+                                Color32::from_rgb(154, 160, 166)
                             };
 
                             let title_btn = ui.selectable_label(
@@ -843,7 +845,7 @@ impl GuiApp {
                             if tab.is_loading {
                                 ui.label(
                                     RichText::new("..")
-                                        .color(Color32::from_rgb(56, 189, 248))
+                                        .color(Color32::from_rgb(138, 180, 248))
                                         .strong(),
                                 );
                             }
@@ -866,19 +868,19 @@ impl GuiApp {
                 }
             }
 
-            // New Tab '+' button with Slate styling
+            // New Tab '+' button with Chrome circle styling
             Frame::NONE
-                .fill(Color32::from_rgb(15, 20, 31))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
-                .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(Margin::symmetric(6, 2))
+                .fill(Color32::from_rgb(28, 28, 28))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(Margin::symmetric(7, 3))
                 .show(ui, |ui| {
                     if ui
                         .button(
                             RichText::new("+")
                                 .size(13.0)
                                 .strong()
-                                .color(Color32::from_rgb(148, 163, 184)),
+                                .color(Color32::from_rgb(189, 193, 198)),
                         )
                         .clicked()
                     {
@@ -896,10 +898,10 @@ impl GuiApp {
                 // THE X-MODE TOGGLE SWITCH
                 let toggle_text = if self.x_mode_enabled {
                     RichText::new("X-MODE: ACTIVE")
-                        .color(Color32::from_rgb(239, 68, 68))
+                        .color(Color32::from_rgb(234, 67, 53))
                         .strong()
                 } else {
-                    RichText::new("X-MODE: OFF").color(Color32::from_rgb(148, 163, 184))
+                    RichText::new("X-MODE: OFF").color(Color32::from_rgb(154, 160, 166))
                 };
 
                 let x_btn = ui.button(toggle_text);
@@ -922,7 +924,7 @@ impl GuiApp {
                 ui.label(
                     RichText::new("Excalibur")
                         .strong()
-                        .color(Color32::from_rgb(148, 163, 184)),
+                        .color(Color32::from_rgb(154, 160, 166)),
                 );
             });
         });
@@ -935,18 +937,18 @@ impl GuiApp {
                 RichText::new("EXCALIBUR")
                     .size(15.0)
                     .strong()
-                    .color(Color32::from_rgb(241, 245, 249)),
+                    .color(Color32::from_rgb(241, 243, 244)),
             );
             Frame::NONE
-                .fill(Color32::from_rgb(15, 23, 42))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                .fill(Color32::from_rgb(32, 33, 36))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
                 .corner_radius(egui::CornerRadius::same(4))
                 .inner_margin(Margin::symmetric(5, 2))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new("ZEN")
                             .size(10.0)
-                            .color(Color32::from_rgb(56, 189, 248))
+                            .color(Color32::from_rgb(138, 180, 248))
                             .strong(),
                     );
                 });
@@ -954,8 +956,8 @@ impl GuiApp {
         ui.add_space(6.0);
 
         Frame::NONE
-            .fill(Color32::from_rgb(20, 27, 42))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74)))
+            .fill(Color32::from_rgb(32, 33, 36))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
             .corner_radius(egui::CornerRadius::same(6))
             .inner_margin(Margin::symmetric(10, 5))
             .show(ui, |ui| {
@@ -964,7 +966,7 @@ impl GuiApp {
                         RichText::new("+ New Tab")
                             .size(12.5)
                             .strong()
-                            .color(Color32::from_rgb(241, 245, 249)),
+                            .color(Color32::from_rgb(241, 243, 244)),
                     )
                     .clicked()
                 {
@@ -981,7 +983,7 @@ impl GuiApp {
         ui.label(
             RichText::new(format!("OPEN TABS ({})", self.tabs.len()))
                 .size(10.5)
-                .color(Color32::from_rgb(100, 116, 139))
+                .color(Color32::from_rgb(154, 160, 166))
                 .strong(),
         );
         ui.add_space(4.0);
@@ -996,15 +998,15 @@ impl GuiApp {
                 for tab in &self.tabs {
                     let is_active = tab.id == self.active_tab_id;
                     let bg_color = if is_active {
-                        Color32::from_rgb(20, 27, 42)
+                        Color32::from_rgb(32, 33, 36)
                     } else {
-                        Color32::from_rgb(11, 15, 23)
+                        Color32::from_rgb(18, 18, 18)
                     };
 
                     let stroke_color = if is_active {
-                        Color32::from_rgb(56, 189, 248)
+                        Color32::from_rgb(60, 64, 67)
                     } else {
-                        Color32::from_rgb(30, 41, 59)
+                        Color32::from_rgb(28, 28, 28)
                     };
 
                     Frame::NONE
@@ -1015,19 +1017,16 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let tag = site_pill_tag(&tab.url);
-                                let tag_color = site_pill_color(&tab.url);
                                 Frame::NONE
-                                    .fill(Color32::from_rgba_premultiplied(
-                                        tag_color.r() / 6,
-                                        tag_color.g() / 6,
-                                        tag_color.b() / 6,
-                                        255,
-                                    ))
+                                    .fill(Color32::from_rgb(48, 51, 56))
                                     .corner_radius(egui::CornerRadius::same(3))
                                     .inner_margin(Margin::symmetric(3, 1))
                                     .show(ui, |ui| {
                                         ui.label(
-                                            RichText::new(tag).size(9.0).color(tag_color).strong(),
+                                            RichText::new(tag)
+                                                .size(9.0)
+                                                .color(Color32::from_rgb(189, 193, 198))
+                                                .strong(),
                                         );
                                     });
 
@@ -1038,9 +1037,9 @@ impl GuiApp {
                                 };
 
                                 let title_color = if is_active {
-                                    Color32::WHITE
+                                    Color32::from_rgb(241, 243, 244)
                                 } else {
-                                    Color32::from_rgb(148, 163, 184)
+                                    Color32::from_rgb(154, 160, 166)
                                 };
 
                                 if ui
@@ -1179,7 +1178,12 @@ impl GuiApp {
                             can_fwd,
                             egui::Button::new(
                                 RichText::new(">")
-                                    .color(Color32::from_rgb(56, 189, 248))
+                                    .size(13.0)
+                                    .color(if can_fwd {
+                                        Color32::from_rgb(232, 234, 237)
+                                    } else {
+                                        Color32::from_rgb(95, 99, 104)
+                                    })
                                     .strong(),
                             ),
                         )
@@ -1199,7 +1203,8 @@ impl GuiApp {
                     if ui
                         .button(
                             RichText::new(reload_label)
-                                .color(Color32::from_rgb(56, 189, 248))
+                                .size(12.5)
+                                .color(Color32::from_rgb(232, 234, 237))
                                 .strong(),
                         )
                         .clicked()
@@ -1218,7 +1223,8 @@ impl GuiApp {
                     if ui
                         .button(
                             RichText::new("H")
-                                .color(Color32::from_rgb(56, 189, 248))
+                                .size(12.5)
+                                .color(Color32::from_rgb(232, 234, 237))
                                 .strong(),
                         )
                         .clicked()
@@ -1228,7 +1234,7 @@ impl GuiApp {
 
                     ui.add_space(4.0);
 
-                    // Central Omnibox Pill
+                    // Central Omnibox Pill (Chrome 18px pill with #282a2d dark fill)
                     let right_tools_reserved = if self.tab_nav_layout == TabNavLayout::Sidebar {
                         450.0
                     } else {
@@ -1241,63 +1247,60 @@ impl GuiApp {
                     let mut te_has_focus = false;
 
                     Frame::NONE
-                        .fill(Color32::from_rgb(15, 20, 31))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74)))
-                        .corner_radius(egui::CornerRadius::same(16))
-                        .inner_margin(Margin::symmetric(10, 3))
+                        .fill(Color32::from_rgb(40, 42, 45)) // Chrome dark omnibox fill #282a2d
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
+                        .corner_radius(egui::CornerRadius::same(18))
+                        .inner_margin(Margin::symmetric(12, 4))
                         .show(ui, |ui| {
                             ui.set_width(omnibox_width);
                             ui.horizontal(|ui| {
                                 // Security Pill
                                 if is_internal {
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(18, 30, 48))
-                                        .stroke(Stroke::new(
-                                            1.0_f32,
-                                            Color32::from_rgb(56, 189, 248),
-                                        ))
+                                        .fill(Color32::from_rgb(32, 33, 36))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
                                         .corner_radius(egui::CornerRadius::same(10))
                                         .inner_margin(Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
                                             ui.label(
-                                                RichText::new("INTERNAL")
+                                                RichText::new("Internal")
                                                     .size(9.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(125, 211, 252)),
+                                                    .color(Color32::from_rgb(154, 160, 166)),
                                             );
                                         });
                                 } else if is_https {
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(16, 36, 26))
+                                        .fill(Color32::from_rgb(24, 38, 28))
                                         .stroke(Stroke::new(
                                             1.0_f32,
-                                            Color32::from_rgb(34, 197, 94),
+                                            Color32::from_rgb(52, 168, 83),
                                         ))
                                         .corner_radius(egui::CornerRadius::same(10))
                                         .inner_margin(Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
                                             ui.label(
-                                                RichText::new("HTTPS")
+                                                RichText::new("Secure")
                                                     .size(9.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(74, 222, 128)),
+                                                    .color(Color32::from_rgb(52, 168, 83)),
                                             );
                                         });
                                 } else {
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(36, 24, 12))
+                                        .fill(Color32::from_rgb(40, 26, 24))
                                         .stroke(Stroke::new(
                                             1.0_f32,
-                                            Color32::from_rgb(245, 158, 11),
+                                            Color32::from_rgb(234, 67, 53),
                                         ))
                                         .corner_radius(egui::CornerRadius::same(10))
                                         .inner_margin(Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
                                             ui.label(
-                                                RichText::new("HTTP")
+                                                RichText::new("Not Secure")
                                                     .size(9.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(251, 191, 36)),
+                                                    .color(Color32::from_rgb(234, 67, 53)),
                                             );
                                         });
                                 }
@@ -1344,12 +1347,12 @@ impl GuiApp {
                                 let star_text = if is_bookmarked {
                                     RichText::new("Saved")
                                         .size(11.0)
-                                        .color(Color32::from_rgb(56, 189, 248))
+                                        .color(Color32::from_rgb(138, 180, 248))
                                         .strong()
                                 } else {
                                     RichText::new("Save")
                                         .size(11.0)
-                                        .color(Color32::from_rgb(148, 163, 184))
+                                        .color(Color32::from_rgb(154, 160, 166))
                                 };
 
                                 let star_tooltip = if is_bookmarked {
@@ -1378,7 +1381,7 @@ impl GuiApp {
                                     .button(
                                         RichText::new("Copy")
                                             .size(11.0)
-                                            .color(Color32::from_rgb(148, 163, 184)),
+                                            .color(Color32::from_rgb(189, 193, 198)),
                                     )
                                     .clicked()
                                 {
@@ -1410,8 +1413,8 @@ impl GuiApp {
                                 .order(egui::Order::Foreground)
                                 .show(ui.ctx(), |ui| {
                                     Frame::NONE
-                                        .fill(Color32::from_rgb(15, 20, 31))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 51, 74)))
+                                        .fill(Color32::from_rgb(40, 42, 45)) // Chrome dark omnibox popup #282a2d
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 64, 67)))
                                         .corner_radius(egui::CornerRadius::same(8))
                                         .inner_margin(Margin::symmetric(10, 6))
                                         .show(ui, |ui| {
@@ -1628,7 +1631,7 @@ impl GuiApp {
                         egui::Sense::hover(),
                     );
                     let painter = ui.painter();
-                    painter.rect_filled(rect, 1.0, Color32::from_rgb(10, 20, 36));
+                    painter.rect_filled(rect, 1.0, Color32::from_rgb(48, 51, 56));
 
                     let cycle = (time * 1.5).fract() as f32;
                     let beam_width = (rect.width() * 0.35).max(40.0);
@@ -1640,7 +1643,7 @@ impl GuiApp {
                             egui::pos2(beam_min_x, rect.min.y),
                             egui::pos2(beam_max_x, rect.max.y),
                         );
-                        painter.rect_filled(beam_rect, 1.0, Color32::from_rgb(0, 240, 255));
+                        painter.rect_filled(beam_rect, 1.0, Color32::from_rgb(138, 180, 248));
                     }
                 }
             });
@@ -1649,9 +1652,9 @@ impl GuiApp {
     fn render_favorites_bar(&mut self, ui: &mut Ui) {
         let active_id = self.active_tab_id;
         Frame::NONE
-            .fill(Color32::from_rgb(11, 15, 23))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
-            .corner_radius(egui::CornerRadius::same(6))
+            .fill(Color32::from_rgb(32, 33, 36)) // Chrome #202124
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
+            .corner_radius(egui::CornerRadius::same(0))
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1659,7 +1662,7 @@ impl GuiApp {
                         RichText::new("FAVORITES")
                             .size(10.0)
                             .strong()
-                            .color(Color32::from_rgb(100, 116, 139)),
+                            .color(Color32::from_rgb(154, 160, 166)),
                     );
 
                     let mut navigate_to = None;
@@ -1678,7 +1681,7 @@ impl GuiApp {
                             .button(
                                 RichText::new(display_label)
                                     .size(11.0)
-                                    .color(Color32::from_rgb(203, 213, 225)),
+                                    .color(Color32::from_rgb(232, 234, 237)),
                             )
                             .on_hover_text(format!("{}\nFolder: {}", bm.url, bm.folder))
                             .clicked()
@@ -1691,7 +1694,7 @@ impl GuiApp {
                         .button(
                             RichText::new("+ Manage")
                                 .size(11.0)
-                                .color(Color32::from_rgb(56, 189, 248)),
+                                .color(Color32::from_rgb(138, 180, 248)),
                         )
                         .on_hover_text("Open Bookmarks Manager (excalibur://bookmarks)")
                         .clicked()
@@ -1708,8 +1711,8 @@ impl GuiApp {
 
     fn render_x_mode_toolbar(&mut self, ui: &mut Ui) {
         Frame::NONE
-            .fill(Color32::from_rgb(10, 16, 28))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 52, 92)))
+            .fill(Color32::from_rgb(24, 24, 26))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 51, 56)))
             .corner_radius(egui::CornerRadius::same(6))
             .inner_margin(Margin::symmetric(10, 4))
             .show(ui, |ui| {
@@ -1926,16 +1929,16 @@ impl GuiApp {
                 if tab.is_loading {
                     ui.label(
                         RichText::new("Connecting...")
-                            .color(Color32::from_rgb(56, 189, 248))
+                            .color(Color32::from_rgb(138, 180, 248))
                             .strong(),
                     );
                 } else if let Some(status) = tab.status_code {
                     let status_color = if status < 300 {
-                        Color32::from_rgb(16, 185, 129)
+                        Color32::from_rgb(52, 168, 83) // Chrome green
                     } else if status < 400 {
-                        Color32::from_rgb(245, 158, 11)
+                        Color32::from_rgb(251, 188, 4) // Chrome amber
                     } else {
-                        Color32::from_rgb(239, 68, 68)
+                        Color32::from_rgb(234, 67, 53) // Chrome red
                     };
                     ui.label(
                         RichText::new(format!("HTTP {}", status))
@@ -1945,13 +1948,13 @@ impl GuiApp {
                     if let Some(ms) = tab.elapsed_ms {
                         ui.label(
                             RichText::new(format!("{} ms", ms))
-                                .color(Color32::from_rgb(148, 163, 184)),
+                                .color(Color32::from_rgb(154, 160, 166)),
                         );
                     }
                 } else {
                     ui.label(
                         RichText::new("Ready")
-                            .color(Color32::from_rgb(148, 163, 184))
+                            .color(Color32::from_rgb(154, 160, 166))
                             .strong(),
                     );
                 }
@@ -1961,13 +1964,13 @@ impl GuiApp {
                 } else {
                     tab.url.clone()
                 };
-                ui.label(RichText::new(display_url).color(Color32::from_rgb(203, 213, 225)));
+                ui.label(RichText::new(display_url).color(Color32::from_rgb(232, 234, 237)));
                 if let Some(ref dom) = tab.parsed_dom {
                     ui.separator();
                     let nodes_count = count_dom_nodes(dom);
                     ui.label(
                         RichText::new(format!("{} nodes", nodes_count))
-                            .color(Color32::from_rgb(148, 163, 184)),
+                            .color(Color32::from_rgb(154, 160, 166)),
                     );
                 }
             }
@@ -1976,10 +1979,10 @@ impl GuiApp {
                 let issues = self.scanner_state.findings.len();
                 let issue_text = if issues > 0 {
                     RichText::new(format!("Radar: {} Flaws", issues))
-                        .color(Color32::from_rgb(239, 68, 68))
+                        .color(Color32::from_rgb(234, 67, 53))
                         .strong()
                 } else {
-                    RichText::new("Radar: 0 Flaws").color(Color32::from_rgb(16, 185, 129))
+                    RichText::new("Radar: 0 Flaws").color(Color32::from_rgb(52, 168, 83))
                 };
 
                 if ui.button(issue_text).clicked() {
@@ -1990,7 +1993,7 @@ impl GuiApp {
                 ui.separator();
                 let captured = self.interceptor_state.traffic_items.len();
                 let proxy_text = RichText::new(format!("Proxy (Captured: {})", captured))
-                    .color(Color32::from_rgb(148, 163, 184));
+                    .color(Color32::from_rgb(154, 160, 166));
                 if ui.button(proxy_text).clicked() {
                     self.x_mode_enabled = true;
                     self.x_mode_tab = XModeTab::Interceptor;
@@ -2033,30 +2036,6 @@ fn site_pill_tag(url: &str) -> &'static str {
         "MITM"
     } else {
         "WEB"
-    }
-}
-
-fn site_pill_color(url: &str) -> Color32 {
-    if url.contains("owasp") {
-        Color32::from_rgb(0, 240, 255) // Neon Cyan
-    } else if url.contains("portswigger") {
-        Color32::from_rgb(251, 146, 60) // Vivid Orange
-    } else if url.contains("github") {
-        Color32::from_rgb(192, 132, 252) // Luminous Purple
-    } else if url.contains("ycombinator") {
-        Color32::from_rgb(248, 113, 113) // Coral Red
-    } else if url.contains("cloudflare") {
-        Color32::from_rgb(56, 189, 248) // Electric Azure
-    } else if url.contains("httpbin") {
-        Color32::from_rgb(52, 211, 153) // Emerald Green
-    } else if url.contains("cve") {
-        Color32::from_rgb(239, 68, 68) // Crimson Red
-    } else if url.contains("about:blank") || url.contains("newtab") {
-        Color32::from_rgb(96, 165, 250) // Royal Blue
-    } else if url.contains("127.0.0.1") || url.contains("localhost") {
-        Color32::from_rgb(250, 204, 21) // Amber Gold
-    } else {
-        Color32::from_rgb(56, 189, 248) // Electric Blue
     }
 }
 
