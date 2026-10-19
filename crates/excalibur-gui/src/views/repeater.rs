@@ -1,4 +1,6 @@
-use eframe::egui::{self, Color32, RichText, ScrollArea, Ui};
+use crate::theme::colors;
+use crate::widgets::{badge, card, code_block, method_color, primary_button, status_color, toggle};
+use eframe::egui::{self, vec2, Frame, Margin, RichText, ScrollArea, Stroke, Ui};
 
 pub struct RepeaterViewState {
     pub method: String,
@@ -26,27 +28,62 @@ impl Default for RepeaterViewState {
     }
 }
 
+const METHODS: [&str; 7] = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+
+fn mono_editor(ui: &mut Ui, text: &mut String, rows: usize) {
+    Frame::NONE
+        .fill(colors::field())
+        .stroke(Stroke::new(1.0_f32, colors::border()))
+        .corner_radius(8)
+        .inner_margin(Margin::same(8))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .frame(false)
+                    .code_editor()
+                    .desired_rows(rows)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+}
+
 pub fn render_repeater_view(ui: &mut Ui, state: &mut RepeaterViewState) {
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
         egui::ComboBox::from_id_salt("repeater_method")
-            .selected_text(&state.method)
+            .width(96.0)
+            .selected_text(
+                RichText::new(&state.method)
+                    .monospace()
+                    .strong()
+                    .color(method_color(&state.method)),
+            )
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.method, "GET".into(), "GET");
-                ui.selectable_value(&mut state.method, "POST".into(), "POST");
-                ui.selectable_value(&mut state.method, "PUT".into(), "PUT");
-                ui.selectable_value(&mut state.method, "DELETE".into(), "DELETE");
-                ui.selectable_value(&mut state.method, "PATCH".into(), "PATCH");
-                ui.selectable_value(&mut state.method, "HEAD".into(), "HEAD");
-                ui.selectable_value(&mut state.method, "OPTIONS".into(), "OPTIONS");
+                for m in METHODS {
+                    ui.selectable_value(
+                        &mut state.method,
+                        m.to_string(),
+                        RichText::new(m).monospace().color(method_color(m)),
+                    );
+                }
             });
 
-        ui.label("URL:");
-        ui.text_edit_singleline(&mut state.url);
+        let url_w = (ui.available_width() - 210.0).max(160.0);
+        Frame::NONE
+            .fill(colors::field())
+            .stroke(Stroke::new(1.0_f32, colors::border()))
+            .corner_radius(8)
+            .inner_margin(Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.url)
+                        .frame(false)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(url_w),
+                );
+            });
 
-        let send_btn = RichText::new("Send Request")
-            .color(Color32::WHITE)
-            .strong();
-        if ui.button(send_btn).clicked() {
+        if primary_button(ui, "Send").clicked() {
             state.response_status = 200;
             state.response_elapsed_ms = 19;
             state.response_raw = format!(
@@ -55,60 +92,67 @@ pub fn render_repeater_view(ui: &mut Ui, state: &mut RepeaterViewState) {
                 chrono::Utc::now().timestamp()
             );
         }
-
-        ui.separator();
-        ui.checkbox(&mut state.show_diff, "Show Side-by-Side Diff");
+        toggle(ui, &mut state.show_diff);
+        ui.label(RichText::new("Diff").size(12.5).color(colors::text_dim()));
     });
 
-    ui.separator();
+    ui.add_space(10.0);
 
     ui.columns(2, |cols| {
-        // Left Column: Request Builder
-        cols[0].group(|ui| {
-            ui.heading("Request Composition");
-            ui.label("Headers (Key: Value):");
-            ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-                ui.text_edit_multiline(&mut state.headers);
-            });
-
+        card(&mut cols[0], |ui| {
+            ui.label(RichText::new("Request").strong().color(colors::text()));
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Headers")
+                    .size(12.0)
+                    .color(colors::text_faint()),
+            );
+            ScrollArea::vertical()
+                .id_salt("repeater_headers")
+                .max_height(150.0)
+                .show(ui, |ui| mono_editor(ui, &mut state.headers, 5));
             ui.add_space(8.0);
-            ui.label("Body Payload:");
-            ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                ui.text_edit_multiline(&mut state.body);
-            });
+            ui.label(RichText::new("Body").size(12.0).color(colors::text_faint()));
+            ScrollArea::vertical()
+                .id_salt("repeater_body")
+                .max_height(200.0)
+                .show(ui, |ui| mono_editor(ui, &mut state.body, 6));
         });
 
-        // Right Column: Response / Diff Viewer
-        cols[1].group(|ui| {
-            let status_color = if state.response_status < 300 {
-                Color32::from_rgb(63, 185, 80)
-            } else {
-                Color32::from_rgb(248, 81, 73)
-            };
-
+        card(&mut cols[1], |ui| {
             ui.horizontal(|ui| {
-                ui.heading("Response Viewer");
-                ui.label(
-                    RichText::new(format!("Status: {}", state.response_status))
-                        .color(status_color)
-                        .strong(),
+                ui.label(RichText::new("Response").strong().color(colors::text()));
+                badge(
+                    ui,
+                    &state.response_status.to_string(),
+                    status_color(state.response_status),
                 );
-                ui.label(format!("({} ms)", state.response_elapsed_ms));
+                ui.label(
+                    RichText::new(format!("{} ms", state.response_elapsed_ms))
+                        .size(12.0)
+                        .color(colors::text_faint()),
+                );
             });
-
-            if state.show_diff {
-                ui.label(RichText::new("Diff Comparison").italics());
-                ScrollArea::vertical().show(ui, |ui| {
-                    ui.label("--- Request Payload ---");
-                    ui.code(&state.body);
-                    ui.label("+++ Response Body +++");
-                    ui.code(&state.response_raw);
+            ui.add_space(6.0);
+            ScrollArea::vertical()
+                .id_salt("repeater_response")
+                .show(ui, |ui| {
+                    if state.show_diff {
+                        ui.label(
+                            RichText::new("− Request body")
+                                .size(12.0)
+                                .color(colors::danger()),
+                        );
+                        code_block(ui, &state.body);
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("+ Response")
+                                .size(12.0)
+                                .color(colors::success()),
+                        );
+                    }
+                    code_block(ui, &state.response_raw);
                 });
-            } else {
-                ScrollArea::vertical().show(ui, |ui| {
-                    ui.code(&state.response_raw);
-                });
-            }
         });
     });
 }

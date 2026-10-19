@@ -1,4 +1,6 @@
-use eframe::egui::{Color32, RichText, Ui};
+use crate::theme::colors;
+use crate::widgets::{badge, code_block, section, setting_row, toggle};
+use eframe::egui::{RichText, ScrollArea, Ui};
 
 pub struct ProxyManagerState {
     pub proxy_bind_addr: String,
@@ -21,48 +23,62 @@ impl Default for ProxyManagerState {
 }
 
 pub fn render_proxy_manager(ui: &mut Ui, state: &mut ProxyManagerState) {
-    ui.heading("Inbound MITM Proxy & Certificate Authority");
-    ui.label("Excalibur can act as an inbound proxy for external browsers, curl, Postman, or mobile devices.");
+    ScrollArea::vertical()
+        .id_salt("proxy_manager_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_max_width(760.0);
 
-    ui.add_space(8.0);
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            let status_badge = if state.is_proxy_running {
-                RichText::new("[ LISTENING ]")
-                    .color(Color32::from_rgb(63, 185, 80))
-                    .strong()
-            } else {
-                RichText::new("[ STOPPED ]")
-                    .color(Color32::from_rgb(248, 81, 73))
-                    .strong()
-            };
-            ui.label(status_badge);
-            ui.label(format!("Proxy Endpoint: http://{}", state.proxy_bind_addr));
+            section(
+                ui,
+                "MITM proxy listener",
+                "External browsers, curl, Postman or mobile devices can route traffic through Excalibur.",
+                |ui| {
+                    let (label, col) = if state.is_proxy_running {
+                        ("Listening", colors::success())
+                    } else {
+                        ("Stopped", colors::danger())
+                    };
+                    setting_row(
+                        ui,
+                        &format!("http://{}", state.proxy_bind_addr),
+                        "Inbound HTTP/HTTPS proxy endpoint",
+                        |ui| {
+                            toggle(ui, &mut state.is_proxy_running);
+                            badge(ui, label, col);
+                        },
+                    );
+                },
+            );
+            ui.add_space(12.0);
 
-            if ui
-                .button(if state.is_proxy_running {
-                    "Stop Listener"
-                } else {
-                    "Start Listener"
-                })
-                .clicked()
-            {
-                state.is_proxy_running = !state.is_proxy_running;
-            }
+            section(
+                ui,
+                "Certificate authority",
+                "Leaf certificates are forged on the fly for every intercepted HTTPS host.",
+                |ui| {
+                    ui.label(
+                        RichText::new("Root CA fingerprint")
+                            .size(12.0)
+                            .color(colors::text_faint()),
+                    );
+                    code_block(ui, &state.ca_fingerprint);
+                    ui.add_space(6.0);
+                    setting_row(ui, "Certificates issued", "", |ui| {
+                        badge(ui, &state.forged_certs_count.to_string(), colors::text_dim());
+                    });
+                    setting_row(ui, "Session storage", &state.storage_stats, |_| {});
+                },
+            );
+            ui.add_space(12.0);
+
+            section(
+                ui,
+                "Client configuration",
+                "Point the client at the listener for both protocols:",
+                |ui| {
+                    code_block(ui, "HTTP Proxy:  127.0.0.1:8080\nHTTPS Proxy: 127.0.0.1:8080");
+                },
+            );
         });
-
-        ui.add_space(8.0);
-        ui.label(RichText::new("Root CA Certificate:").strong());
-        ui.label(format!("Fingerprint: {}", state.ca_fingerprint));
-        ui.label("Leaf certificates are generated on-the-fly for every intercepted HTTPS domain.");
-
-        ui.add_space(8.0);
-        ui.label(RichText::new("Session Storage:").strong());
-        ui.label(&state.storage_stats);
-    });
-
-    ui.add_space(16.0);
-    ui.heading("Client Configuration Instructions");
-    ui.label("To intercept traffic from external tools or secondary browsers:");
-    ui.code("HTTP Proxy:  127.0.0.1:8080\nHTTPS Proxy: 127.0.0.1:8080");
 }

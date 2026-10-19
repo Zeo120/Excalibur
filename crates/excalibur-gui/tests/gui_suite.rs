@@ -11,8 +11,10 @@ fn create_test_app() -> GuiApp {
         next_tab_id: 2,
         omnibox_input: "https://example.com".to_string(),
         browser_renderer: Default::default(),
-        tab_nav_layout: TabNavLayout::Top,
+        tab_nav_layout: TabNavLayout::Compact,
         show_favorites_bar: true,
+        prefs: Default::default(),
+        chrome: Default::default(),
         x_mode_enabled: false,
         x_mode_tab: XModeTab::Interceptor,
         x_mode_layout: XModeLayout::SplitDrawer,
@@ -25,8 +27,6 @@ fn create_test_app() -> GuiApp {
         cached_bookmarks: Vec::new(),
         closed_tabs_history: Vec::new(),
         omnibox_suggestions: Vec::new(),
-        show_omnibox_dropdown: false,
-        focus_omnibox: false,
         page_tx: tx,
         page_rx: rx,
         egui_ctx: None,
@@ -38,9 +38,9 @@ fn test_modern_browser_rendering_and_tabs() {
     let ctx = egui::Context::default();
     let mut app = create_test_app();
 
-    // 1. Render Modern Browser Mode (X-Mode OFF, Horizontal tabs)
+    // 1. Render browser mode (X-Mode OFF, compact auto-hide sidebar)
     assert!(!app.x_mode_enabled);
-    assert_eq!(app.tab_nav_layout, TabNavLayout::Top);
+    assert_eq!(app.tab_nav_layout, TabNavLayout::Compact);
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         app.render_panels(ctx);
     });
@@ -55,7 +55,7 @@ fn test_modern_browser_rendering_and_tabs() {
         app.render_panels(ctx);
     });
 
-    // 3. Toggle to Zen / Arc Vertical Sidebar Mode
+    // 3. Dock the Zen vertical sidebar
     app.tab_nav_layout = TabNavLayout::Sidebar;
     assert_eq!(app.tab_nav_layout, TabNavLayout::Sidebar);
     let _ = ctx.run(egui::RawInput::default(), |ctx| {

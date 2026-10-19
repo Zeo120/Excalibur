@@ -1,4 +1,10 @@
-use eframe::egui::{Color32, RichText, ScrollArea, Ui};
+use crate::icons::Icon;
+use crate::theme::colors;
+use crate::widgets::{
+    badge, card, code_block, empty_state, list_row, overline, search_field, severity_color,
+    single_line,
+};
+use eframe::egui::{pos2, vec2, RichText, ScrollArea, Ui};
 
 #[derive(Clone)]
 pub struct GuiFindingItem {
@@ -66,120 +72,135 @@ impl Default for ScannerViewState {
     }
 }
 
+const SEVERITIES: [&str; 4] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
 pub fn render_scanner_view(ui: &mut Ui, state: &mut ScannerViewState) {
-    // Summary badges
-    let critical_count = state
-        .findings
-        .iter()
-        .filter(|f| f.severity == "CRITICAL")
-        .count();
-    let high_count = state
-        .findings
-        .iter()
-        .filter(|f| f.severity == "HIGH")
-        .count();
-    let medium_count = state
-        .findings
-        .iter()
-        .filter(|f| f.severity == "MEDIUM")
-        .count();
-    let low_count = state
-        .findings
-        .iter()
-        .filter(|f| f.severity == "LOW")
-        .count();
-
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Vulnerability Radar:").strong());
-        ui.label(
-            RichText::new(format!("[ CRITICAL: {} ]", critical_count))
-                .color(Color32::from_rgb(218, 54, 51)),
+        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+        for sev in SEVERITIES {
+            let n = state.findings.iter().filter(|f| f.severity == sev).count();
+            let col = if n > 0 {
+                severity_color(sev)
+            } else {
+                colors::text_faint()
+            };
+            badge(ui, &format!("{} {}", n, sev.to_lowercase()), col);
+        }
+        ui.add_space(8.0);
+        search_field(
+            ui,
+            &mut state.search_query,
+            "Search findings",
+            240.0,
+            "scanner_search",
         );
-        ui.label(
-            RichText::new(format!("[ HIGH: {} ]", high_count))
-                .color(Color32::from_rgb(248, 81, 73)),
-        );
-        ui.label(
-            RichText::new(format!("[ MEDIUM: {} ]", medium_count))
-                .color(Color32::from_rgb(210, 153, 34)),
-        );
-        ui.label(
-            RichText::new(format!("[ LOW: {} ]", low_count)).color(Color32::from_rgb(88, 166, 255)),
-        );
-
-        ui.separator();
-        ui.label("Search:");
-        ui.text_edit_singleline(&mut state.search_query);
     });
+    ui.add_space(10.0);
 
-    ui.separator();
+    let query = state.search_query.to_ascii_lowercase();
+    let visible: Vec<usize> = state
+        .findings
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            query.is_empty()
+                || f.title.to_ascii_lowercase().contains(&query)
+                || f.rule_id.to_ascii_lowercase().contains(&query)
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    if state.findings.is_empty() {
+        empty_state(
+            ui,
+            Icon::Shield,
+            "No findings",
+            "Passive checks run on every page you load.",
+        );
+        return;
+    }
 
     ui.columns(2, |cols| {
-        // Left Column: Findings List
-        cols[0].group(|ui| {
-            ui.heading("Detected Vulnerabilities");
-            ScrollArea::vertical().show(ui, |ui| {
-                let query = state.search_query.to_ascii_lowercase();
-
-                for (idx, finding) in state.findings.iter().enumerate() {
-                    if !query.is_empty()
-                        && !finding.title.to_ascii_lowercase().contains(&query)
-                        && !finding.rule_id.to_ascii_lowercase().contains(&query)
-                    {
-                        continue;
-                    }
-
-                    let is_selected = idx == state.selected_idx;
-                    let sev_color = match finding.severity.as_str() {
-                        "CRITICAL" => Color32::from_rgb(218, 54, 51),
-                        "HIGH" => Color32::from_rgb(248, 81, 73),
-                        "MEDIUM" => Color32::from_rgb(210, 153, 34),
-                        _ => Color32::from_rgb(88, 166, 255),
-                    };
-
-                    let label_text = format!("[{}] {}", finding.severity, finding.title);
-                    if ui
-                        .selectable_label(is_selected, RichText::new(label_text).color(sev_color))
-                        .clicked()
-                    {
+        let ui = &mut cols[0];
+        overline(ui, &format!("{} findings", visible.len()));
+        ui.add_space(4.0);
+        ScrollArea::vertical()
+            .id_salt("findings_list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+                for idx in visible {
+                    let f = &state.findings[idx];
+                    let (rect, resp) = list_row(ui, 44.0, idx == state.selected_idx);
+                    let sev = severity_color(&f.severity);
+                    ui.painter()
+                        .circle_filled(pos2(rect.left() + 14.0, rect.center().y), 4.0, sev);
+                    let w = rect.width() - 36.0;
+                    let title = single_line(ui, &f.title, 13.0, colors::text(), w);
+                    ui.painter().galley(
+                        pos2(rect.left() + 28.0, rect.top() + 6.0),
+                        title,
+                        colors::text(),
+                    );
+                    let meta = single_line(
+                        ui,
+                        &format!("{} · {}", f.severity, f.rule_id),
+                        11.0,
+                        colors::text_faint(),
+                        w,
+                    );
+                    ui.painter().galley(
+                        pos2(rect.left() + 28.0, rect.bottom() - 18.0),
+                        meta,
+                        colors::text_faint(),
+                    );
+                    if resp.clicked() {
                         state.selected_idx = idx;
                     }
                 }
             });
-        });
 
-        // Right Column: Details Inspector
-        cols[1].group(|ui| {
-            if let Some(finding) = state.findings.get(state.selected_idx) {
-                ui.heading(&finding.title);
-                ui.label(
-                    RichText::new(format!(
-                        "Rule ID: {} | Severity: {}",
-                        finding.rule_id, finding.severity
-                    ))
-                    .strong(),
-                );
-                ui.separator();
-
-                ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(RichText::new("Technical Impact:").strong());
-                    ui.label(&finding.description);
-                    ui.add_space(8.0);
-
-                    ui.label(RichText::new("Remediation Guidance:").strong());
-                    ui.label(&finding.recommendation);
-                    ui.add_space(8.0);
-
-                    ui.label(RichText::new("Raw Evidence:").strong());
-                    ui.code(&finding.evidence);
-                    ui.add_space(8.0);
-
-                    ui.label(RichText::new("Reproduction cURL Command:").strong());
-                    ui.code(&finding.curl_command);
+        let ui = &mut cols[1];
+        let Some(f) = state.findings.get(state.selected_idx) else {
+            empty_state(ui, Icon::Info, "Select a finding", "Details appear here.");
+            return;
+        };
+        ScrollArea::vertical()
+            .id_salt("finding_detail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                card(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        badge(ui, &f.severity, severity_color(&f.severity));
+                        ui.label(
+                            RichText::new(&f.rule_id)
+                                .monospace()
+                                .size(11.5)
+                                .color(colors::text_faint()),
+                        );
+                    });
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(&f.title)
+                            .size(16.0)
+                            .strong()
+                            .color(colors::text()),
+                    );
+                    ui.add_space(10.0);
+                    for (heading, body) in [
+                        ("Impact", &f.description),
+                        ("Remediation", &f.recommendation),
+                    ] {
+                        overline(ui, heading);
+                        ui.label(RichText::new(body).size(13.0).color(colors::text_dim()));
+                        ui.add_space(10.0);
+                    }
+                    overline(ui, "Evidence");
+                    code_block(ui, &f.evidence);
+                    ui.add_space(10.0);
+                    overline(ui, "Reproduce");
+                    code_block(ui, &f.curl_command);
                 });
-            } else {
-                ui.label("No finding selected.");
-            }
-        });
+            });
     });
 }
