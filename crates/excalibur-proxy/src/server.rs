@@ -5,7 +5,7 @@ use bytes::Bytes;
 use excalibur_core::client::{ClientOptions, HttpClient};
 use excalibur_core::network::{HttpHeaders, HttpRequest};
 use excalibur_core::storage::WorkspaceStorage;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -113,16 +113,27 @@ impl ProxyServer {
             .next()
             .unwrap_or(target_authority);
 
-        // Read and consume the CONNECT request headers
+        // Read and consume the CONNECT request headers with size bounding and timeout
+        const MAX_CONNECT_HEADER_SIZE: usize = 16 * 1024;
         let mut header_buf = Vec::new();
         let mut byte = [0u8; 1];
-        while !header_buf.ends_with(b"\r\n\r\n") {
-            let read_n = stream.read(&mut byte).await?;
-            if read_n == 0 {
-                return Err(anyhow!("Client disconnected before completing CONNECT"));
+        let read_headers_fut = async {
+            while !header_buf.ends_with(b"\r\n\r\n") {
+                let read_n = stream.read(&mut byte).await?;
+                if read_n == 0 {
+                    return Err(anyhow!("Client disconnected before completing CONNECT"));
+                }
+                header_buf.push(byte[0]);
+                if header_buf.len() > MAX_CONNECT_HEADER_SIZE {
+                    return Err(anyhow!("CONNECT headers exceed maximum size limit (16KB)"));
+                }
             }
-            header_buf.push(byte[0]);
-        }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), read_headers_fut)
+            .await
+            .map_err(|_| anyhow!("Timeout reading CONNECT headers"))??;
 
         // Send 200 Connection Established to client
         stream
@@ -242,9 +253,19 @@ impl ProxyServer {
             }
         }
 
-        let body_bytes = match hyper_req.into_body().collect().await {
+        const MAX_PROXY_BODY_SIZE: usize = 32 * 1024 * 1024; // 32 MB limit
+        let limited_body = Limited::new(hyper_req.into_body(), MAX_PROXY_BODY_SIZE);
+        let body_bytes = match limited_body.collect().await {
             Ok(collected) => collected.to_bytes().to_vec(),
-            Err(_) => Vec::new(),
+            Err(e) => {
+                tracing::warn!("Proxy rejected oversized request body: {}", e);
+                return Ok(Response::builder()
+                    .status(413)
+                    .body(Full::new(Bytes::from(
+                        "413 Payload Too Large (Excalibur Proxy Limit: 32MB)\r\n",
+                    )))
+                    .unwrap());
+            }
         };
 
         let mut app_req = HttpRequest::new(method, full_url);

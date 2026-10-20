@@ -70,3 +70,39 @@ fn test_lua_packet_mutation_pipeline() {
     let mutated_res = lua.apply_response_hook(res).expect("apply response hook");
     assert_eq!(mutated_res.headers.get("X-Audit-Passed"), Some("false"));
 }
+
+#[test]
+fn test_lua_sandbox_restricts_dangerous_apis() {
+    let lua = LuaRuntime::new().expect("create lua runtime");
+
+    // os and io modules must be nil to prevent RCE and arbitrary file read/write
+    assert_eq!(lua.eval_string("type(os)").unwrap(), "nil");
+    assert_eq!(lua.eval_string("type(io)").unwrap(), "nil");
+    assert_eq!(lua.eval_string("type(package)").unwrap(), "nil");
+    assert_eq!(lua.eval_string("type(loadfile)").unwrap(), "nil");
+    assert_eq!(lua.eval_string("type(dofile)").unwrap(), "nil");
+}
+
+#[test]
+fn test_js_telemetry_cannot_be_tampered_with() {
+    let js = JsRuntime::new().expect("create js runtime");
+
+    // Native internal hooks must not be directly callable in global scope
+    assert_eq!(
+        js.eval("typeof globalThis.__native_sink_hit").unwrap(),
+        "undefined"
+    );
+    assert_eq!(
+        js.eval("typeof globalThis.__native_console_msg").unwrap(),
+        "undefined"
+    );
+
+    // eval hook must be non-writable and non-configurable
+    let _ = js.eval("globalThis.eval = function() { return 42; };");
+    js.eval("eval('var secret = 1337;')").unwrap();
+
+    let findings = js.get_sink_findings();
+    assert!(findings
+        .iter()
+        .any(|f| f.sink_name == "eval" && f.argument.contains("secret")));
+}

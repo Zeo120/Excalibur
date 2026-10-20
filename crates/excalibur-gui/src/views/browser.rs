@@ -101,11 +101,22 @@ impl ThumbnailCache {
             self.pending.remove(&url);
             match result {
                 Ok(color_image) => {
+                    const MAX_TEXTURE_CACHE_ENTRIES: usize = 128;
+                    if self.textures.len() >= MAX_TEXTURE_CACHE_ENTRIES {
+                        if let Some(evict_key) = self.textures.keys().next().cloned() {
+                            self.textures.remove(&evict_key);
+                        }
+                    }
                     let handle = ctx.load_texture(&url, color_image, egui::TextureOptions::LINEAR);
                     self.textures.insert(url, handle);
                 }
                 Err(reason) => {
                     tracing::debug!("Image {} failed: {}", url, reason);
+                    if self.failed.len() >= 256 {
+                        if let Some(evict_key) = self.failed.keys().next().cloned() {
+                            self.failed.remove(&evict_key);
+                        }
+                    }
                     self.failed.insert(url, reason);
                 }
             }
@@ -175,12 +186,26 @@ impl ThumbnailCache {
                 Ok(resp) if (200..300).contains(&resp.status) => {
                     match image::load_from_memory(&resp.body) {
                         Ok(dyn_img) => {
-                            let rgba = dyn_img.to_rgba8();
-                            let size = [rgba.width() as usize, rgba.height() as usize];
-                            Ok(egui::ColorImage::from_rgba_unmultiplied(
-                                size,
-                                rgba.as_raw(),
-                            ))
+                            let (w, h) = (dyn_img.width(), dyn_img.height());
+                            // Mitigate decompression bombs (e.g. 50,000 x 50,000 pixels)
+                            const MAX_IMAGE_DIMENSION: u32 = 4096;
+                            const MAX_IMAGE_PIXELS: u64 = 16_777_216; // 16 MP
+                            if w > MAX_IMAGE_DIMENSION
+                                || h > MAX_IMAGE_DIMENSION
+                                || (w as u64 * h as u64) > MAX_IMAGE_PIXELS
+                            {
+                                Err(format!(
+                                    "Image dimensions {}x{} exceed security threshold",
+                                    w, h
+                                ))
+                            } else {
+                                let rgba = dyn_img.to_rgba8();
+                                let size = [rgba.width() as usize, rgba.height() as usize];
+                                Ok(egui::ColorImage::from_rgba_unmultiplied(
+                                    size,
+                                    rgba.as_raw(),
+                                ))
+                            }
                         }
                         Err(e) => Err(format!("Unsupported or corrupt image ({})", e)),
                     }
@@ -2143,24 +2168,40 @@ impl BrowserRenderer {
                                         // External pop-out option
                                         if ui
                                             .small_button("External")
-                                            .on_hover_text("Open in External App")
+                                            .on_hover_text("Open in External Browser")
                                             .clicked()
                                         {
-                                            let target_url = format!(
-                                                "https://www.youtube.com/watch?v={}",
-                                                watch.video_id
-                                            );
-                                            #[cfg(target_os = "windows")]
+                                            let clean_id: String = watch
+                                                .video_id
+                                                .chars()
+                                                .filter(|c| {
+                                                    c.is_ascii_alphanumeric()
+                                                        || *c == '-'
+                                                        || *c == '_'
+                                                })
+                                                .collect();
+                                            let target_url = if !clean_id.is_empty() {
+                                                format!(
+                                                    "https://www.youtube.com/watch?v={}",
+                                                    clean_id
+                                                )
+                                            } else if let Ok(parsed) =
+                                                url::Url::parse(&watch.video_id)
                                             {
-                                                let _ = std::process::Command::new("cmd")
-                                                    .args(["/C", "start", &target_url])
-                                                    .spawn();
-                                            }
-                                            #[cfg(not(target_os = "windows"))]
-                                            {
-                                                let _ = std::process::Command::new("xdg-open")
-                                                    .arg(&target_url)
-                                                    .spawn();
+                                                if parsed.scheme() == "http"
+                                                    || parsed.scheme() == "https"
+                                                {
+                                                    parsed.to_string()
+                                                } else {
+                                                    String::new()
+                                                }
+                                            } else {
+                                                String::new()
+                                            };
+
+                                            if !target_url.is_empty() {
+                                                ui.ctx()
+                                                    .open_url(egui::OpenUrl::new_tab(&target_url));
                                             }
                                         }
 

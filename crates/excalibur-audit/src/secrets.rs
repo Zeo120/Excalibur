@@ -129,10 +129,13 @@ impl SecretScanner {
 
     /// Redacts all but the first 4 and last 4 characters of a secret.
     pub fn redact_secret(s: &str) -> String {
-        if s.len() <= 8 {
-            return "*".repeat(s.len());
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() <= 8 {
+            return "*".repeat(chars.len());
         }
-        format!("{}...{}", &s[..4], &s[s.len().saturating_sub(4)..])
+        let prefix: String = chars[..4].iter().collect();
+        let suffix: String = chars[chars.len().saturating_sub(4)..].iter().collect();
+        format!("{}...{}", prefix, suffix)
     }
 
     /// Scans text (source code, JSON, headers, JS bundles) for sensitive tokens.
@@ -248,5 +251,13 @@ mod tests {
 
         let high_entropy = SecretScanner::shannon_entropy("4b8d7f2a1e9c5b0d8f3a7e2c");
         assert!(high_entropy > 3.0);
+    }
+
+    #[test]
+    fn test_multibyte_utf8_redaction() {
+        // Multi-byte Unicode characters (e.g., emojis or accents) must not panic on slice
+        let s = "秘密トークン_キー_123456789";
+        let redacted = SecretScanner::redact_secret(s);
+        assert!(redacted.contains("..."));
     }
 }

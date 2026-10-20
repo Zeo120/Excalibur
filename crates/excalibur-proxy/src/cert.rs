@@ -73,8 +73,14 @@ impl CertificateAuthority {
         let cert_chain = vec![cert_der];
         let pair = (cert_chain, key_der);
 
-        // Cache the newly created certificate
+        // Cache the newly created certificate with capacity bounding
+        const MAX_CERT_CACHE_ENTRIES: usize = 512;
         if let Ok(mut cache) = self.cert_cache.write() {
+            if cache.len() >= MAX_CERT_CACHE_ENTRIES {
+                if let Some(evict_key) = cache.keys().next().cloned() {
+                    cache.remove(&evict_key);
+                }
+            }
             cache.insert(domain.to_string(), clone_cert_pair(&pair));
         }
 

@@ -9,9 +9,18 @@ pub struct LuaRuntime {
 }
 
 impl LuaRuntime {
-    /// Creates and initializes a new Lua runtime with fuzzer utility functions.
+    /// Creates and initializes a new sandboxed Lua runtime with fuzzer utility functions.
     pub fn new() -> Result<Self> {
         let lua = Lua::new();
+        // Sandbox environment: strip dangerous OS and filesystem execution APIs
+        let globals = lua.globals();
+        globals.set("os", mlua::Value::Nil)?;
+        globals.set("io", mlua::Value::Nil)?;
+        globals.set("package", mlua::Value::Nil)?;
+        globals.set("dofile", mlua::Value::Nil)?;
+        globals.set("loadfile", mlua::Value::Nil)?;
+        globals.set("require", mlua::Value::Nil)?;
+
         Self::init_fuzz_module(&lua)?;
         Ok(Self {
             lua: Mutex::new(lua),

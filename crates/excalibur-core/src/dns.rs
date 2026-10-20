@@ -39,17 +39,28 @@ pub fn get_cached_addrs(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
     None
 }
 
+const MAX_DNS_CACHE_ENTRIES: usize = 1024;
+
 /// Store resolved socket addresses in the in-memory DNS cache.
 pub fn store_cached_addrs(host: &str, addrs: &[SocketAddr], ttl: Duration) {
     if addrs.is_empty() {
         return;
     }
     if let Ok(mut cache) = DNS_CACHE.write() {
+        let now = Instant::now();
+        if cache.len() >= MAX_DNS_CACHE_ENTRIES {
+            cache.retain(|_, entry| entry.expires_at > now);
+        }
+        if cache.len() >= MAX_DNS_CACHE_ENTRIES {
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(&first_key);
+            }
+        }
         cache.insert(
             host.to_string(),
             DnsCacheEntry {
                 addrs: addrs.to_vec(),
-                expires_at: Instant::now() + ttl,
+                expires_at: now + ttl,
             },
         );
     }
@@ -221,7 +232,12 @@ fn parse_dns_response(buf: &[u8], expected_id: u16) -> Vec<Ipv4Addr> {
 
 /// Fallback DNS resolver using direct public DNS (Cloudflare 1.1.1.1 and Google 8.8.8.8).
 async fn resolve_public_dns(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
-    let query_id = 0xA1B2;
+    // Generate a cryptographically random 16-bit transaction ID to defend against Kaminsky DNS cache poisoning
+    let query_id = {
+        let u = uuid::Uuid::new_v4();
+        let b = u.as_bytes();
+        u16::from_be_bytes([b[0], b[1]])
+    };
     let query_packet = build_dns_query(host, query_id)?;
 
     let public_resolvers = [

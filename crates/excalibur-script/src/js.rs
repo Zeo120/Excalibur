@@ -192,14 +192,20 @@ impl JsRuntime {
                     const global = globalThis;
                     global.window = global;
 
-                    // Console mock
-                    global.console = {
-                        log: (...args) => __native_console_msg("log", args.map(String).join(" ")),
-                        info: (...args) => __native_console_msg("info", args.map(String).join(" ")),
-                        warn: (...args) => __native_console_msg("warn", args.map(String).join(" ")),
-                        error: (...args) => __native_console_msg("error", args.map(String).join(" ")),
-                        debug: (...args) => __native_console_msg("debug", args.map(String).join(" "))
-                    };
+                    // Capture native callbacks securely in closure and remove from global scope
+                    const _sinkHit = global.__native_sink_hit;
+                    const _consoleMsg = global.__native_console_msg;
+                    delete global.__native_sink_hit;
+                    delete global.__native_console_msg;
+
+                    // Console mock (frozen to prevent tampering)
+                    global.console = Object.freeze({
+                        log: (...args) => _consoleMsg("log", args.map(String).join(" ")),
+                        info: (...args) => _consoleMsg("info", args.map(String).join(" ")),
+                        warn: (...args) => _consoleMsg("warn", args.map(String).join(" ")),
+                        error: (...args) => _consoleMsg("error", args.map(String).join(" ")),
+                        debug: (...args) => _consoleMsg("debug", args.map(String).join(" "))
+                    });
 
                     // Location mock
                     global.location = {
@@ -232,14 +238,14 @@ impl JsRuntime {
                             get: () => innerHtmlVal,
                             set: (val) => {
                                 innerHtmlVal = String(val);
-                                __native_sink_hit("Element.innerHTML", innerHtmlVal);
+                                _sinkHit("Element.innerHTML", innerHtmlVal);
                             }
                         });
                         Object.defineProperty(el, "outerHTML", {
                             get: () => innerHtmlVal,
                             set: (val) => {
                                 innerHtmlVal = String(val);
-                                __native_sink_hit("Element.outerHTML", innerHtmlVal);
+                                _sinkHit("Element.outerHTML", innerHtmlVal);
                             }
                         });
                         Object.defineProperty(el, "textContent", {
@@ -266,33 +272,43 @@ impl JsRuntime {
                         querySelectorAll: (sel) => [createMockElement("DIV")],
                         createElement: (tag) => createMockElement(tag),
                         write: (content) => {
-                            __native_sink_hit("document.write", String(content));
+                            _sinkHit("document.write", String(content));
                         },
                         writeln: (content) => {
-                            __native_sink_hit("document.writeln", String(content));
+                            _sinkHit("document.writeln", String(content));
                         }
                     };
 
-                    // XSS Sink Hooks: eval()
+                    // XSS Sink Hooks: eval() locked with Object.defineProperty
                     const _origEval = global.eval;
-                    global.eval = function(code) {
-                        __native_sink_hit("eval", String(code));
-                        return _origEval(code);
-                    };
+                    Object.defineProperty(global, "eval", {
+                        value: function(code) {
+                            _sinkHit("eval", String(code));
+                            return _origEval(code);
+                        },
+                        writable: false,
+                        configurable: false,
+                        enumerable: false
+                    });
 
-                    // Sink: Function() constructor
+                    // Sink: Function() constructor locked with Object.defineProperty
                     const _origFunction = global.Function;
-                    global.Function = function(...args) {
-                        const body = args.join("; ");
-                        __native_sink_hit("Function", body);
-                        return _origFunction.apply(this, args);
-                    };
+                    Object.defineProperty(global, "Function", {
+                        value: function(...args) {
+                            const body = args.join("; ");
+                            _sinkHit("Function", body);
+                            return _origFunction.apply(this, args);
+                        },
+                        writable: false,
+                        configurable: false,
+                        enumerable: false
+                    });
 
                     // Sink: setTimeout string evaluation
                     const _origSetTimeout = global.setTimeout;
                     global.setTimeout = function(handler, timeout, ...args) {
                         if (typeof handler === "string") {
-                            __native_sink_hit("setTimeout", handler);
+                            _sinkHit("setTimeout", handler);
                         }
                         if (typeof _origSetTimeout === "function") {
                             return _origSetTimeout(handler, timeout, ...args);
@@ -304,7 +320,7 @@ impl JsRuntime {
                     const _origSetInterval = global.setInterval;
                     global.setInterval = function(handler, timeout, ...args) {
                         if (typeof handler === "string") {
-                            __native_sink_hit("setInterval", handler);
+                            _sinkHit("setInterval", handler);
                         }
                         if (typeof _origSetInterval === "function") {
                             return _origSetInterval(handler, timeout, ...args);
