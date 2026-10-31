@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use excalibur_tui::{ActiveTab, TrafficItem, TuiApp};
+use excalibur_tui::{ActiveTab, InspectorFocus, RepeaterField, TrafficItem, TuiApp};
 use ratatui::{backend::TestBackend, Terminal};
 
 fn make_key(code: KeyCode) -> KeyEvent {
@@ -126,6 +126,71 @@ fn test_inspector_traffic_and_repeater_transfer() {
     // Fire request in repeater ('r')
     app.handle_key(make_key(KeyCode::Char('r')));
     assert!(app.repeater_res_raw.contains("200 OK"));
+}
+
+#[test]
+fn test_help_modal_toggle() {
+    let mut app = TuiApp::new();
+    assert!(!app.show_help);
+
+    // Toggle help with '?'
+    app.handle_key(make_key(KeyCode::Char('?')));
+    assert!(app.show_help);
+
+    // Close help with 'Esc'
+    app.handle_key(make_key(KeyCode::Esc));
+    assert!(!app.show_help);
+}
+
+#[test]
+fn test_inspector_filtering_and_focus() {
+    let mut app = TuiApp::new();
+    app.active_tab = ActiveTab::Inspector;
+    assert_eq!(app.inspector_focus, InspectorFocus::Table);
+
+    // Tab switches focus
+    app.handle_key(make_key(KeyCode::Tab));
+    assert_eq!(app.inspector_focus, InspectorFocus::Request);
+
+    app.handle_key(make_key(KeyCode::Tab));
+    assert_eq!(app.inspector_focus, InspectorFocus::Response);
+
+    // '/' starts filter editing
+    app.handle_key(make_key(KeyCode::Char('/')));
+    assert!(app.is_filtering_inspector);
+
+    app.handle_key(make_key(KeyCode::Char('a')));
+    app.handle_key(make_key(KeyCode::Char('p')));
+    app.handle_key(make_key(KeyCode::Char('i')));
+    assert_eq!(app.inspector_filter, "api");
+
+    // Esc closes filter editing
+    app.handle_key(make_key(KeyCode::Esc));
+    assert!(!app.is_filtering_inspector);
+}
+
+#[test]
+fn test_repeater_field_cycling_and_editing() {
+    let mut app = TuiApp::new();
+    app.active_tab = ActiveTab::Repeater;
+    assert_eq!(app.repeater_active_field, RepeaterField::Url);
+
+    // Tab cycles fields: Url -> Headers -> Body -> Method -> Url
+    app.handle_key(make_key(KeyCode::Tab));
+    assert_eq!(app.repeater_active_field, RepeaterField::Headers);
+
+    app.handle_key(make_key(KeyCode::Tab));
+    assert_eq!(app.repeater_active_field, RepeaterField::Body);
+
+    app.handle_key(make_key(KeyCode::Tab));
+    assert_eq!(app.repeater_active_field, RepeaterField::Method);
+
+    // 'e' toggles edit mode
+    app.handle_key(make_key(KeyCode::Char('e')));
+    assert!(app.is_editing_repeater);
+
+    app.handle_key(make_key(KeyCode::Esc));
+    assert!(!app.is_editing_repeater);
 }
 
 #[test]

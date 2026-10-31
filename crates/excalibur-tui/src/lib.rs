@@ -4,5 +4,8 @@ pub mod app;
 pub mod ui;
 pub mod views;
 
-pub use app::{ActiveTab, AuditFindingItem, TrafficItem, TuiApp};
+pub use app::{
+    ActiveTab, AuditFindingItem, InspectorFocus, RepeaterField, TrafficItem, TuiApp,
+    TuiBackgroundEvent,
+};
 pub use ui::render_ui;

@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "excalibur-tui"
+path = "src/main.rs"
+
 [dependencies]
 excalibur-core = { path = "../excalibur-core" }
 excalibur-dom = { path = "../excalibur-dom" }
@@ -15,3 +19,4 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+url = { workspace = true }

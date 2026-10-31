@@ -13,14 +13,20 @@ pub fn render_browser_view(f: &mut Frame, app: &TuiApp, area: Rect) {
         .split(area);
 
     let url_title = if app.is_editing_url {
-        " URL [EDITING - Enter: Load, Esc: Cancel] "
+        " URL Bar [EDITING - Enter: Load, Esc: Cancel] "
+    } else if app.is_loading {
+        " URL Bar [FETCHING IN BACKGROUND...] "
     } else {
-        " URL [/ to edit, H: Back, L: Fwd, j/k: Scroll] "
+        " URL Bar [/ to edit, H: Back, L: Fwd, j/k: Scroll, r: Reload] "
     };
 
     let url_style = if app.is_editing_url {
         Style::default()
             .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else if app.is_loading {
+        Style::default()
+            .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Cyan)
@@ -48,12 +54,21 @@ pub fn render_browser_view(f: &mut Frame, app: &TuiApp, area: Rect) {
         &app.browser_rendered_text
     };
 
+    let viewport_title = if app.is_loading {
+        format!(
+            " Web Viewport [Loading... Line {}] ",
+            app.browser_scroll + 1
+        )
+    } else {
+        format!(
+            " Web Viewport [Rendered via DOM Engine | Line {}] ",
+            app.browser_scroll + 1
+        )
+    };
+
     let page_view = Paragraph::new(content)
         .scroll((app.browser_scroll, 0))
         .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            " Web Viewport [Scroll: Line {}] ",
-            app.browser_scroll + 1
-        )));
+        .block(Block::default().borders(Borders::ALL).title(viewport_title));
     f.render_widget(page_view, chunks[1]);
 }

@@ -1,5 +1,6 @@
 use anyhow::{Context as AnyhowContext, Result};
 use clap::{Parser, Subcommand};
+#[cfg(feature = "gui")]
 use eframe::NativeOptions;
 use excalibur_audit::ResponseAuditor;
 use excalibur_core::{
@@ -8,11 +9,13 @@ use excalibur_core::{
     storage::WorkspaceStorage,
 };
 use excalibur_dom::{HtmlParser, ResourceExtractor};
+#[cfg(feature = "gui")]
 use excalibur_gui::GuiApp;
 use excalibur_proxy::{
     cert::CertificateAuthority, interceptor::TrafficInterceptor, server::ProxyServer,
 };
 use excalibur_script::{JsRuntime, LuaRuntime};
+#[cfg(feature = "tui")]
 use excalibur_tui::TuiApp;
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -113,39 +116,63 @@ async fn main() -> Result<()> {
     }
 
     // Determine whether to run GUI or TUI
+    #[cfg(feature = "gui")]
     let run_tui_mode = if cli.tui {
         true
     } else if cli.gui {
         false
     } else {
-        // Auto-detect headless / SSH environment
+        // Auto-detect headless / SSH / PRoot environment
         std::env::var("SSH_CLIENT").is_ok()
             || std::env::var("SSH_TTY").is_ok()
+            || std::env::var("PROOT_TMP_DIR").is_ok()
             || (cfg!(target_os = "linux")
                 && std::env::var("DISPLAY").is_err()
                 && std::env::var("WAYLAND_DISPLAY").is_err())
     };
 
-    if run_tui_mode {
-        let mut app = TuiApp::new();
-        if let Some(target) = cli.url {
-            app.navigate_to(&target);
+    #[cfg(not(feature = "gui"))]
+    let run_tui_mode = {
+        if cli.gui {
+            anyhow::bail!("Excalibur was compiled without GUI support. Run in TUI mode with --tui or rebuild with --features gui.");
         }
-        app.run()?;
+        true
+    };
+
+    if run_tui_mode {
+        #[cfg(feature = "tui")]
+        {
+            let mut app = TuiApp::new();
+            if let Some(target) = cli.url {
+                app.navigate_to(&target);
+            }
+            app.run()?;
+        }
+        #[cfg(not(feature = "tui"))]
+        {
+            anyhow::bail!("Excalibur was compiled without TUI support.");
+        }
     } else {
-        let native_options = NativeOptions::default();
-        let target_url = cli.url.clone();
-        let _ = eframe::run_native(
-            "Excalibur Browser",
-            native_options,
-            Box::new(move |cc| {
-                let mut app = GuiApp::new(cc);
-                if let Some(url) = target_url {
-                    app.navigate(1, &url);
-                }
-                Ok(Box::new(app))
-            }),
-        );
+        #[cfg(feature = "gui")]
+        {
+            let native_options = NativeOptions::default();
+            let target_url = cli.url.clone();
+            let _ = eframe::run_native(
+                "Excalibur Browser",
+                native_options,
+                Box::new(move |cc| {
+                    let mut app = GuiApp::new(cc);
+                    if let Some(url) = target_url {
+                        app.navigate(1, &url);
+                    }
+                    Ok(Box::new(app))
+                }),
+            );
+        }
+        #[cfg(not(feature = "gui"))]
+        {
+            anyhow::bail!("Excalibur was compiled without GUI support.");
+        }
     }
 
     Ok(())

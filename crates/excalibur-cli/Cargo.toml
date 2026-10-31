@@ -9,17 +9,22 @@ license.workspace = true
 name = "excalibur"
 path = "src/main.rs"
 
+[features]
+default = ["gui", "tui"]
+gui = ["dep:excalibur-gui", "dep:eframe"]
+tui = ["dep:excalibur-tui"]
+
 [dependencies]
 excalibur-core = { path = "../excalibur-core" }
 excalibur-proxy = { path = "../excalibur-proxy" }
 excalibur-dom = { path = "../excalibur-dom" }
 excalibur-script = { path = "../excalibur-script" }
 excalibur-audit = { path = "../excalibur-audit" }
-excalibur-tui = { path = "../excalibur-tui" }
-excalibur-gui = { path = "../excalibur-gui" }
+excalibur-tui = { path = "../excalibur-tui", optional = true }
+excalibur-gui = { path = "../excalibur-gui", optional = true }
+eframe = { workspace = true, optional = true }
 clap = { workspace = true }
 tokio = { workspace = true }
-eframe = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }

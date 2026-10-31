@@ -1354,6 +1354,7 @@ dependencies = [
  "ratatui",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

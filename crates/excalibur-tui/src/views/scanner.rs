@@ -32,7 +32,7 @@ pub fn render_scanner_view(f: &mut Frame, app: &TuiApp, area: Rect) {
                 "CRITICAL" => Color::Magenta,
                 "HIGH" => Color::Red,
                 "MEDIUM" => Color::Yellow,
-                "LOW" => Color::Blue,
+                "LOW" => Color::Cyan,
                 _ => Color::Gray,
             };
 
@@ -46,7 +46,8 @@ pub fn render_scanner_view(f: &mut Frame, app: &TuiApp, area: Rect) {
 
             let row_style = if is_selected {
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Rgb(40, 50, 60))
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
@@ -65,7 +66,7 @@ pub fn render_scanner_view(f: &mut Frame, app: &TuiApp, area: Rect) {
 
     let table = Table::new(rows, widths).header(header).block(
         Block::default().borders(Borders::ALL).title(format!(
-            " Security Vulnerability Scanner ({} issues) [j/k: Select Issue] ",
+            " Security Vulnerability Radar ({} detected issues) [j/k: Select, c: Clear] ",
             app.audit_findings.len()
         )),
     );
@@ -74,7 +75,7 @@ pub fn render_scanner_view(f: &mut Frame, app: &TuiApp, area: Rect) {
     // Detail pane for selected finding
     let detail_text = if let Some(item) = app.audit_findings.get(app.selected_audit_index) {
         format!(
-            "Rule: {}\nSeverity: {}\nTitle: {}\n\nDescription:\n{}\n\nRecommendation:\n{}\n\nEvidence:\n{}",
+            "Rule ID:        {}\nSeverity:       {}\nFinding Title:  {}\n\nDescription:\n  {}\n\nRemediation & Recommendation:\n  {}\n\nEvidence & Context:\n  {}",
             item.rule_id,
             item.severity,
             item.title,
@@ -83,15 +84,17 @@ pub fn render_scanner_view(f: &mut Frame, app: &TuiApp, area: Rect) {
             item.evidence
         )
     } else {
-        "No finding selected.".to_string()
+        "No finding selected. Navigate to web targets to run automated security audits.".to_string()
     };
 
     let detail_view = Paragraph::new(detail_text)
+        .scroll((app.scanner_detail_scroll, 0))
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Vulnerability Details & Remediation "),
+                .border_style(Style::default().fg(Color::Red))
+                .title(" Vulnerability Remediation & Security Telemetry "),
         );
     f.render_widget(detail_view, main_chunks[1]);
 }

@@ -80,10 +80,31 @@ cargo run --bin excalibur -- https://example.com
 Once running, click the `[ X-MODE ]` toggle in the menu bar to open or dock the penetration testing tool suite.
 
 ### 2. Launching the Terminal User Interface (TUI)
-Starts the full-screen terminal workbench:
+Starts the full-screen terminal workbench (Browser, Traffic Inspector, Interactive Repeater, and Vulnerability Scanner):
 
 ```bash
+# Via unified CLI:
 cargo run --bin excalibur -- --tui https://example.com
+
+# Standalone binary (PRoot & Termux friendly, zero GUI/X11/Wayland/audio dependencies):
+cargo run -p excalibur-tui -- https://example.com
+```
+
+#### Running inside PRoot / Termux / Headless Linux:
+Excalibur's TUI is engineered to run seamlessly in unprivileged PRoot environments (like Android Termux or minimal Linux containers) with:
+- **Zero GUI/Audio dependencies**: No X11, Wayland, or ALSA (`libasound2`) packages required.
+- **Terminal Crash Protection**: Custom panic hook ensures raw mode and terminal screen buffers are always cleanly restored.
+- **Built-in WebPKI TLS Roots**: Operates reliably even if system CA certificate bundles are missing or outdated in chroot.
+- **Graceful Window Resizing**: Safe handling for 0x0 or sub-minimal terminal geometry without panic.
+
+```bash
+# 1. Build the standalone TUI directly:
+cargo build --release -p excalibur-tui
+./target/release/excalibur-tui https://example.com
+
+# 2. Or build the unified CLI without GUI dependencies:
+cargo build --release --bin excalibur --no-default-features --features tui
+./target/release/excalibur --tui https://example.com
 ```
 
 ### 3. Headless Security Audit Scan
