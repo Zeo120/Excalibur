@@ -1,10 +1,21 @@
-use std::{rc::Rc, sync::Arc, time::Duration};
+use std::{
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use excalibur_cef::{CefEvent, CefRuntime};
-use excalibur_core::{normalize_url_or_search, BrowserConfig, Storage, TabManager};
+use excalibur_core::{
+    normalize_url_or_search, sample_process_tree_memory, BrowserConfig, MemorySnapshot, Storage,
+    TabManager,
+};
 use raw_window_handle::HasWindowHandle;
 
-use crate::drawer::{truncate_text, ActiveDrawer, DrawerAction, DrawerState};
+use crate::{
+    drawer::{truncate_text, ActiveDrawer, DrawerAction, DrawerState},
+    icons::{icon_button, paint_icon, IconKind},
+    theme,
+};
 
 pub struct ExcaliburBrowserApp {
     config: BrowserConfig,
@@ -17,6 +28,8 @@ pub struct ExcaliburBrowserApp {
     focus_omnibox_next_frame: bool,
     last_bounds: Option<(i32, i32, i32, i32)>,
     last_window_title: String,
+    memory: MemorySnapshot,
+    last_housekeeping: Instant,
 }
 
 impl ExcaliburBrowserApp {
@@ -37,11 +50,12 @@ impl ExcaliburBrowserApp {
             }
         }));
 
-        configure_theme(&cc.egui_ctx);
+        theme::apply_theme(&cc.egui_ctx);
 
         let mut tabs = TabManager::new();
         tabs.open_tab(initial_url.clone());
         let drawer = DrawerState::new(&config);
+        let memory = sample_process_tree_memory();
 
         Self {
             config,
@@ -54,6 +68,8 @@ impl ExcaliburBrowserApp {
             focus_omnibox_next_frame: false,
             last_bounds: None,
             last_window_title: "Excalibur".to_owned(),
+            memory,
+            last_housekeeping: Instant::now(),
         }
     }
 
@@ -90,6 +106,25 @@ impl ExcaliburBrowserApp {
         }
         self.last_bounds = None;
         self.sync_active_tab_ui(ctx, target_id);
+    }
+
+    fn sleep_tab(&mut self, tab_id: u64) {
+        self.runtime.close_browser(tab_id);
+        self.tabs.mark_sleeping(tab_id);
+        self.last_bounds = None;
+    }
+
+    fn sleep_all_idle(&mut self) {
+        for id in self.tabs.idle_sleepable_ids() {
+            self.sleep_tab(id);
+        }
+        self.memory = sample_process_tree_memory();
+    }
+
+    fn wake_tab(&mut self, tab_id: u64) {
+        if self.tabs.wake_tab(tab_id) {
+            self.last_bounds = None;
+        }
     }
 
     fn close_tab(&mut self, ctx: &egui::Context, target_id: u64) {
@@ -132,6 +167,19 @@ impl ExcaliburBrowserApp {
         if full != self.last_window_title {
             self.last_window_title = full.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(full));
+        }
+    }
+
+    fn run_housekeeping(&mut self) {
+        if self.last_housekeeping.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.last_housekeeping = Instant::now();
+        self.memory = sample_process_tree_memory();
+
+        let timeout = Duration::from_secs(self.config.tab_sleep_timeout_secs);
+        for id in self.tabs.tabs_eligible_to_sleep(timeout) {
+            self.sleep_tab(id);
         }
     }
 
@@ -195,6 +243,9 @@ impl ExcaliburBrowserApp {
                         }
                     }
                 }
+                CefEvent::RequestBlocked { tab_id, .. } => {
+                    self.tabs.increment_blocked(tab_id);
+                }
                 CefEvent::BrowserClosed { tab_id } => {
                     self.runtime.prune_closed(tab_id);
                 }
@@ -210,6 +261,7 @@ impl ExcaliburBrowserApp {
         self.omnibox_text = target.clone();
         if let Some(tab) = self.tabs.tab_mut(active_id) {
             tab.url = target.clone();
+            tab.is_sleeping = false;
         }
         self.runtime.navigate(active_id, &target);
     }
@@ -226,6 +278,16 @@ impl ExcaliburBrowserApp {
             let _ = self.storage.add_bookmark(&url, &title);
         }
         if self.drawer.active == Some(ActiveDrawer::Bookmarks) {
+            self.drawer.refresh(&self.storage, &self.config);
+        }
+    }
+
+    fn toggle_ad_block(&mut self) {
+        let next = !self.config.ad_block_enabled;
+        self.config.ad_block_enabled = next;
+        self.runtime.blocker().set_enabled(next);
+        let _ = self.storage.save_settings(&self.config);
+        if self.drawer.active == Some(ActiveDrawer::Settings) {
             self.drawer.refresh(&self.storage, &self.config);
         }
     }
@@ -284,7 +346,11 @@ impl ExcaliburBrowserApp {
         }
         if reload_key {
             if let Some(active_id) = self.active_tab_id() {
-                self.runtime.reload(active_id);
+                if self.tabs.tab(active_id).is_some_and(|t| t.is_sleeping) {
+                    self.wake_tab(active_id);
+                } else {
+                    self.runtime.reload(active_id);
+                }
             }
         }
     }
@@ -307,11 +373,19 @@ impl ExcaliburBrowserApp {
         let mut switch_target = None;
         let mut close_target = None;
         let mut pin_target = None;
+        let mut sleep_target = None;
+        let mut wake_target = None;
         let mut duplicate_url = None;
         let mut open_new = false;
 
+        let tab_frame = egui::Frame::NONE
+            .fill(theme::BG_TAB_BAR)
+            .inner_margin(egui::Margin::symmetric(8, 3))
+            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE));
+
         egui::Panel::top("excalibur_tabs")
-            .exact_size(32.0)
+            .exact_size(34.0)
+            .frame(tab_frame)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -323,23 +397,76 @@ impl ExcaliburBrowserApp {
                             ui.horizontal_centered(|ui| {
                                 for tab in self.tabs.tabs() {
                                     let is_active = Some(tab.id) == active_id;
-                                    let prefix = match (tab.pinned, tab.is_loading) {
-                                        (true, true) => "[P*] ",
-                                        (true, false) => "[P] ",
-                                        (false, true) => "* ",
-                                        (false, false) => "",
-                                    };
-                                    let max_len = if tab.pinned { 12 } else { 20 };
-                                    let title =
-                                        format!("{prefix}{}", truncate_text(&tab.title, max_len));
+                                    let max_len = if tab.pinned { 10 } else { 20 };
+                                    let label_text = truncate_text(&tab.title, max_len);
 
                                     let fill = if is_active {
-                                        egui::Color32::from_rgb(38, 40, 50)
+                                        theme::BG_ELEVATED
                                     } else {
-                                        egui::Color32::from_rgb(20, 21, 27)
+                                        theme::BG_TAB_BAR
                                     };
-                                    let btn = egui::Button::new(title).fill(fill);
-                                    let resp = ui.add(btn).on_hover_text(&tab.url);
+                                    let text_color = if tab.is_sleeping {
+                                        theme::TEXT_MUTED
+                                    } else if is_active {
+                                        theme::TEXT_PRIMARY
+                                    } else {
+                                        theme::TEXT_SECONDARY
+                                    };
+
+                                    let rich = if tab.pinned {
+                                        egui::RichText::new(format!("[P] {label_text}"))
+                                            .color(text_color)
+                                    } else {
+                                        egui::RichText::new(label_text).color(text_color)
+                                    };
+
+                                    let stroke = if is_active {
+                                        egui::Stroke::new(1.0, theme::BORDER_STRONG)
+                                    } else {
+                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE)
+                                    };
+
+                                    let resp = ui
+                                        .add(
+                                            egui::Button::new(rich)
+                                                .fill(fill)
+                                                .stroke(stroke)
+                                                .min_size(egui::vec2(0.0, 24.0)),
+                                        )
+                                        .on_hover_text(format!(
+                                            "{}{}",
+                                            tab.url,
+                                            if tab.is_sleeping { " (Sleeping)" } else { "" }
+                                        ));
+
+                                    if is_active {
+                                        let r = resp.rect;
+                                        ui.painter().line_segment(
+                                            [
+                                                egui::pos2(r.min.x + 2.0, r.min.y + 1.0),
+                                                egui::pos2(r.max.x - 2.0, r.min.y + 1.0),
+                                            ],
+                                            egui::Stroke::new(2.0, theme::ACCENT),
+                                        );
+                                    } else if tab.is_sleeping {
+                                        let icon_rect = egui::Rect::from_center_size(
+                                            egui::pos2(resp.rect.min.x + 7.0, resp.rect.center().y),
+                                            egui::vec2(8.0, 8.0),
+                                        );
+                                        paint_icon(
+                                            ui.painter(),
+                                            icon_rect,
+                                            IconKind::Sleep,
+                                            theme::STATUS_WARNING,
+                                        );
+                                    } else if tab.is_loading {
+                                        ui.painter().circle_filled(
+                                            egui::pos2(resp.rect.min.x + 6.0, resp.rect.center().y),
+                                            2.5,
+                                            theme::ACCENT,
+                                        );
+                                    }
+
                                     if resp.clicked() {
                                         switch_target = Some(tab.id);
                                     }
@@ -353,6 +480,15 @@ impl ExcaliburBrowserApp {
                                             pin_target = Some(tab.id);
                                             ui.close();
                                         }
+                                        if tab.is_sleeping {
+                                            if ui.button("Wake Tab").clicked() {
+                                                wake_target = Some(tab.id);
+                                                ui.close();
+                                            }
+                                        } else if !tab.pinned && ui.button("Sleep Tab").clicked() {
+                                            sleep_target = Some(tab.id);
+                                            ui.close();
+                                        }
                                         if ui.button("Duplicate Tab").clicked() {
                                             duplicate_url = Some(tab.url.clone());
                                             ui.close();
@@ -364,13 +500,18 @@ impl ExcaliburBrowserApp {
                                     });
 
                                     if !tab.pinned
-                                        && ui.small_button("x").on_hover_text("Close tab").clicked()
+                                        && icon_button(ui, IconKind::Close, true, false, None)
+                                            .on_hover_text("Close tab (Ctrl+W)")
+                                            .clicked()
                                     {
                                         close_target = Some(tab.id);
                                     }
                                 }
 
-                                if ui.button("+").on_hover_text("New tab (Ctrl+T)").clicked() {
+                                if icon_button(ui, IconKind::Plus, true, false, None)
+                                    .on_hover_text("New tab (Ctrl+T)")
+                                    .clicked()
+                                {
                                     open_new = true;
                                 }
                             });
@@ -383,6 +524,12 @@ impl ExcaliburBrowserApp {
         }
         if let Some(id) = pin_target {
             self.tabs.toggle_pin(id);
+        }
+        if let Some(id) = sleep_target {
+            self.sleep_tab(id);
+        }
+        if let Some(id) = wake_target {
+            self.wake_tab(id);
         }
         if let Some(url) = duplicate_url {
             self.open_new_tab(url, false);
@@ -399,6 +546,7 @@ impl ExcaliburBrowserApp {
 impl eframe::App for ExcaliburBrowserApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.runtime.pump_work();
+        self.run_housekeeping();
         ctx.request_repaint_after(Duration::from_millis(33));
     }
 
@@ -407,50 +555,74 @@ impl eframe::App for ExcaliburBrowserApp {
         self.handle_shortcuts(&ctx);
         self.show_tab_strip(ui, &ctx);
 
-        let (active_id, can_back, can_forward, is_loading, current_url) = self
-            .tabs
-            .active_tab()
-            .map(|t| {
-                (
-                    Some(t.id),
-                    t.can_go_back,
-                    t.can_go_forward,
-                    t.is_loading,
-                    t.url.clone(),
-                )
-            })
-            .unwrap_or((None, false, false, false, String::new()));
+        let (active_id, can_back, can_forward, is_loading, is_sleeping, current_url, tab_blocked) =
+            self.tabs
+                .active_tab()
+                .map(|t| {
+                    (
+                        Some(t.id),
+                        t.can_go_back,
+                        t.can_go_forward,
+                        t.is_loading,
+                        t.is_sleeping,
+                        t.url.clone(),
+                        t.blocked_count,
+                    )
+                })
+                .unwrap_or((None, false, false, false, false, String::new(), 0));
 
         let is_bookmarked =
             !current_url.is_empty() && self.storage.is_bookmarked(&current_url).unwrap_or(false);
+        let idle_sleepable_count = self.tabs.idle_sleepable_ids().len();
+        let sleeping_count = self.tabs.tabs().iter().filter(|t| t.is_sleeping).count();
 
         let mut omnibox_focused = false;
         let mut submit_navigation = false;
         let mut toggle_bookmark = false;
+        let mut toggle_blocker = false;
+        let mut trigger_sleep_idle = false;
+
+        let toolbar_frame = egui::Frame::NONE
+            .fill(theme::BG_TOOLBAR)
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE));
 
         egui::Panel::top("excalibur_toolbar")
-            .exact_size(38.0)
+            .exact_size(40.0)
+            .frame(toolbar_frame)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().item_spacing.x = 4.0;
 
-                    if ui.add_enabled(can_back, egui::Button::new("<")).clicked() {
+                    if icon_button(ui, IconKind::Back, can_back, false, None)
+                        .on_hover_text("Back")
+                        .clicked()
+                    {
                         if let Some(id) = active_id {
                             self.runtime.go_back(id);
                         }
                     }
-                    if ui
-                        .add_enabled(can_forward, egui::Button::new(">"))
+                    if icon_button(ui, IconKind::Forward, can_forward, false, None)
+                        .on_hover_text("Forward")
                         .clicked()
                     {
                         if let Some(id) = active_id {
                             self.runtime.go_forward(id);
                         }
                     }
-                    let reload_label = if is_loading { "X" } else { "R" };
-                    if ui.button(reload_label).clicked() {
+                    let (reload_icon, reload_tip) = if is_loading {
+                        (IconKind::Stop, "Stop loading")
+                    } else {
+                        (IconKind::Reload, "Reload (F5)")
+                    };
+                    if icon_button(ui, reload_icon, active_id.is_some(), false, None)
+                        .on_hover_text(reload_tip)
+                        .clicked()
+                    {
                         if let Some(id) = active_id {
-                            if is_loading {
+                            if is_sleeping {
+                                self.wake_tab(id);
+                            } else if is_loading {
                                 self.runtime.stop_load(id);
                             } else {
                                 self.runtime.reload(id);
@@ -458,58 +630,154 @@ impl eframe::App for ExcaliburBrowserApp {
                         }
                     }
 
-                    let right_controls_width = 235.0;
-                    let avail = (ui.available_width() - right_controls_width).max(120.0);
-                    let response = ui.add_sized(
-                        [avail, 24.0],
-                        egui::TextEdit::singleline(&mut self.omnibox_text)
-                            .id(self.omnibox_id)
-                            .hint_text("Enter URL or search"),
-                    );
-                    if self.focus_omnibox_next_frame {
-                        response.request_focus();
-                        self.focus_omnibox_next_frame = false;
-                    }
-                    omnibox_focused = response.has_focus();
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        submit_navigation = true;
-                    }
+                    ui.add_space(4.0);
 
-                    let bm_star = if is_bookmarked { "Star*" } else { "Star" };
-                    if ui
-                        .button(bm_star)
+                    let right_cluster_width = 310.0;
+                    let avail = (ui.available_width() - right_cluster_width).max(120.0);
+                    let has_omnibox_focus = ui.ctx().memory(|m| m.has_focus(self.omnibox_id));
+                    let field_stroke = if has_omnibox_focus {
+                        theme::ACCENT
+                    } else {
+                        theme::BORDER_SUBTLE
+                    };
+                    let field_frame = egui::Frame::NONE
+                        .fill(theme::BG_FIELD)
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .stroke(egui::Stroke::new(1.0, field_stroke));
+                    field_frame.show(ui, |ui| {
+                        let response = ui.add_sized(
+                            [(avail - 16.0).max(80.0), 18.0],
+                            egui::TextEdit::singleline(&mut self.omnibox_text)
+                                .id(self.omnibox_id)
+                                .frame(egui::Frame::NONE)
+                                .hint_text("Search or enter URL (Ctrl+L)"),
+                        );
+                        if self.focus_omnibox_next_frame {
+                            response.request_focus();
+                            self.focus_omnibox_next_frame = false;
+                        }
+                        omnibox_focused = response.has_focus();
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            submit_navigation = true;
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
+                    let (star_icon, star_tint) = if is_bookmarked {
+                        (IconKind::StarFilled, Some(theme::STATUS_WARNING))
+                    } else {
+                        (IconKind::StarOutline, None)
+                    };
+                    if icon_button(ui, star_icon, active_id.is_some(), false, star_tint)
                         .on_hover_text("Toggle bookmark (Ctrl+D)")
                         .clicked()
                     {
                         toggle_bookmark = true;
                     }
 
-                    if ui
-                        .selectable_label(
-                            self.drawer.active == Some(ActiveDrawer::Bookmarks),
-                            "Bookmarks",
+                    let shield_tint = if self.config.ad_block_enabled {
+                        theme::STATUS_SUCCESS
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+                    if icon_button(
+                        ui,
+                        IconKind::Shield,
+                        true,
+                        self.config.ad_block_enabled,
+                        Some(shield_tint),
+                    )
+                    .on_hover_text(format!(
+                        "Tracker blocker: {} ({} blocked on tab, {} total)",
+                        if self.config.ad_block_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        },
+                        tab_blocked,
+                        self.tabs.total_blocked_count()
+                    ))
+                    .clicked()
+                    {
+                        toggle_blocker = true;
+                    }
+                    if tab_blocked > 0 {
+                        ui.label(
+                            egui::RichText::new(format!("{tab_blocked}"))
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::STATUS_SUCCESS),
+                        );
+                    }
+
+                    let ram_label = format!("{:.0} MB", self.memory.total_mb);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(ram_label)
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::TEXT_SECONDARY),
                         )
-                        .clicked()
+                        .selectable(false),
+                    )
+                    .on_hover_text(format!(
+                        "Host: {:.1} MB\nChromium ({} procs): {:.1} MB\nSleeping tabs: {}",
+                        self.memory.host_mb,
+                        self.memory.child_process_count,
+                        self.memory.chromium_mb,
+                        sleeping_count
+                    ));
+
+                    if icon_button(
+                        ui,
+                        IconKind::Sleep,
+                        idle_sleepable_count > 0,
+                        false,
+                        (idle_sleepable_count > 0).then_some(theme::STATUS_WARNING),
+                    )
+                    .on_hover_text(format!("Sleep {idle_sleepable_count} idle background tabs"))
+                    .clicked()
+                    {
+                        trigger_sleep_idle = true;
+                    }
+
+                    if icon_button(
+                        ui,
+                        IconKind::Bookmarks,
+                        true,
+                        self.drawer.active == Some(ActiveDrawer::Bookmarks),
+                        None,
+                    )
+                    .on_hover_text("Bookmarks (Ctrl+B)")
+                    .clicked()
                     {
                         self.drawer
                             .toggle(ActiveDrawer::Bookmarks, &self.storage, &self.config);
                     }
-                    if ui
-                        .selectable_label(
-                            self.drawer.active == Some(ActiveDrawer::History),
-                            "History",
-                        )
-                        .clicked()
+                    if icon_button(
+                        ui,
+                        IconKind::History,
+                        true,
+                        self.drawer.active == Some(ActiveDrawer::History),
+                        None,
+                    )
+                    .on_hover_text("History (Ctrl+H)")
+                    .clicked()
                     {
                         self.drawer
                             .toggle(ActiveDrawer::History, &self.storage, &self.config);
                     }
-                    if ui
-                        .selectable_label(
-                            self.drawer.active == Some(ActiveDrawer::Settings),
-                            "Settings",
-                        )
-                        .clicked()
+                    if icon_button(
+                        ui,
+                        IconKind::Settings,
+                        true,
+                        self.drawer.active == Some(ActiveDrawer::Settings),
+                        None,
+                    )
+                    .on_hover_text("Settings")
+                    .clicked()
                     {
                         self.drawer
                             .toggle(ActiveDrawer::Settings, &self.storage, &self.config);
@@ -519,6 +787,12 @@ impl eframe::App for ExcaliburBrowserApp {
 
         if toggle_bookmark {
             self.toggle_bookmark_active();
+        }
+        if toggle_blocker {
+            self.toggle_ad_block();
+        }
+        if trigger_sleep_idle {
+            self.sleep_all_idle();
         }
         if submit_navigation {
             self.navigate_omnibox();
@@ -534,6 +808,7 @@ impl eframe::App for ExcaliburBrowserApp {
                     self.open_new_tab(url, false);
                 }
                 DrawerAction::SaveSettings(new_cfg) => {
+                    self.runtime.blocker().set_enabled(new_cfg.ad_block_enabled);
                     if self.storage.save_settings(&new_cfg).is_ok() {
                         self.config = new_cfg;
                     }
@@ -544,11 +819,35 @@ impl eframe::App for ExcaliburBrowserApp {
         self.process_cef_events(&ctx, omnibox_focused);
 
         egui::CentralPanel::no_frame()
-            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(12, 12, 16)))
+            .frame(egui::Frame::NONE.fill(theme::BG_CANVAS))
             .show(ui, |ui| {
                 let Some(tab_id) = self.active_tab_id() else {
                     return;
                 };
+                if is_sleeping {
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(120.0);
+                            ui.label(
+                                egui::RichText::new("Tab is asleep to save memory")
+                                    .size(16.0)
+                                    .color(theme::TEXT_PRIMARY),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(&current_url)
+                                    .size(12.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                            ui.add_space(12.0);
+                            if ui.button("Wake Tab").clicked() {
+                                self.wake_tab(tab_id);
+                            }
+                        });
+                    });
+                    return;
+                }
+
                 let rect = ui.available_rect_before_wrap();
                 let ppp = ctx.pixels_per_point();
                 let bounds = (
@@ -561,16 +860,11 @@ impl eframe::App for ExcaliburBrowserApp {
                 if !self.runtime.has_browser(tab_id) {
                     if self.runtime.is_context_ready() && bounds.2 > 0 && bounds.3 > 0 {
                         if let Ok(window_handle) = frame.window_handle() {
-                            let url = self
-                                .tabs
-                                .tab(tab_id)
-                                .map(|t| t.url.clone())
-                                .unwrap_or_else(|| self.config.home_url.clone());
                             match self.runtime.create_child_browser(
                                 tab_id,
                                 window_handle.as_raw(),
                                 bounds,
-                                &url,
+                                &current_url,
                             ) {
                                 Ok(_) => {
                                     self.last_bounds = Some(bounds);
@@ -582,7 +876,10 @@ impl eframe::App for ExcaliburBrowserApp {
                         }
                     } else {
                         ui.centered_and_justified(|ui| {
-                            ui.label("Initializing Chromium...");
+                            ui.label(
+                                egui::RichText::new("Initializing Chromium...")
+                                    .color(theme::TEXT_SECONDARY),
+                            );
                         });
                     }
                 } else if self.last_bounds != Some(bounds) && bounds.2 > 0 && bounds.3 > 0 {
@@ -596,13 +893,4 @@ impl eframe::App for ExcaliburBrowserApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.runtime.shutdown_cleanly();
     }
-}
-
-fn configure_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = egui::Color32::from_rgb(14, 14, 18);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(8, 8, 11);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(24, 24, 30);
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(36, 36, 44);
-    ctx.set_visuals(visuals);
 }

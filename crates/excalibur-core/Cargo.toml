@@ -6,3 +6,6 @@ license.workspace = true
 
 [dependencies]
 rusqlite.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true

@@ -117,6 +117,9 @@ impl Storage {
                         cfg.tab_sleep_timeout_secs = secs.max(30);
                     }
                 }
+                "ad_block_enabled" => {
+                    cfg.ad_block_enabled = value != "false";
+                }
                 _ => {}
             }
         }
@@ -135,6 +138,14 @@ impl Storage {
             (
                 "tab_sleep_timeout_secs",
                 &config.tab_sleep_timeout_secs.to_string(),
+            ),
+            (
+                "ad_block_enabled",
+                if config.ad_block_enabled {
+                    "true"
+                } else {
+                    "false"
+                },
             ),
         ];
         for (key, value) in pairs {
@@ -328,6 +339,7 @@ mod tests {
             search_template: "https://kagi.com/search?q={query}".to_owned(),
             renderer_process_limit: 6,
             tab_sleep_timeout_secs: 300,
+            ad_block_enabled: false,
         };
         store.save_settings(&cfg).expect("save settings");
 
@@ -338,6 +350,7 @@ mod tests {
         assert_eq!(loaded.search_template, "https://kagi.com/search?q={query}");
         assert_eq!(loaded.renderer_process_limit, 6);
         assert_eq!(loaded.tab_sleep_timeout_secs, 300);
+        assert!(!loaded.ad_block_enabled);
     }
 
     #[test]

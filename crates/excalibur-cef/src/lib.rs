@@ -11,7 +11,7 @@ use cef::{
     initialize, shutdown, sys, Browser, BrowserSettings, CefString, ImplBrowser, ImplBrowserHost,
     ImplCommandLine, ImplFrame, Rect, Settings, WindowInfo,
 };
-use excalibur_core::BrowserConfig;
+use excalibur_core::{BrowserConfig, DomainBlocker};
 use raw_window_handle::RawWindowHandle;
 
 use app::{ExcaliburApp, SharedAppState};
@@ -27,6 +27,7 @@ pub struct CefRuntime {
     _library_guard: CefLibraryGuard,
     cache_dir: std::path::PathBuf,
     shared_state: Arc<SharedAppState>,
+    blocker: Arc<DomainBlocker>,
     event_rx: std::sync::mpsc::Receiver<CefEvent>,
     event_tx: std::sync::mpsc::Sender<CefEvent>,
     browsers: Arc<Mutex<Vec<ExcaliburClientHandle>>>,
@@ -118,6 +119,7 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         _library_guard: library_guard,
         cache_dir,
         shared_state,
+        blocker: Arc::new(DomainBlocker::new(config.ad_block_enabled)),
         event_rx,
         event_tx,
         browsers: Arc::new(Mutex::new(Vec::new())),
@@ -126,6 +128,10 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
 }
 
 impl CefRuntime {
+    /// Returns the shared domain blocker used by CEF resource request handlers.
+    pub fn blocker(&self) -> &Arc<DomainBlocker> {
+        &self.blocker
+    }
     /// Registers a callback invoked when CEF schedules message-pump work.
     pub fn set_wake_callback(&self, cb: Arc<dyn Fn(i64) + Send + Sync>) {
         self.shared_state.set_wake_callback(cb);
@@ -162,7 +168,12 @@ impl CefRuntime {
     ) -> Result<ExcaliburClientHandle, String> {
         let parent_handle = raw_handle_to_cef(parent)?;
         let handle = ExcaliburClientHandle::new(tab_id);
-        let mut client = client::build_client(tab_id, handle.clone(), self.event_tx.clone());
+        let mut client = client::build_client(
+            tab_id,
+            handle.clone(),
+            self.blocker.clone(),
+            self.event_tx.clone(),
+        );
 
         let cef_rect = Rect {
             x: bounds.0,

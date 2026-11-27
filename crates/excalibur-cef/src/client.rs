@@ -1,6 +1,7 @@
 use std::sync::{mpsc::Sender, Arc, Mutex};
 
 use cef::{rc::Rc, *};
+use excalibur_core::DomainBlocker;
 
 /// Events emitted from CEF callbacks to the host UI.
 #[derive(Debug, Clone)]
@@ -22,6 +23,10 @@ pub enum CefEvent {
         is_loading: bool,
         can_go_back: bool,
         can_go_forward: bool,
+    },
+    RequestBlocked {
+        tab_id: u64,
+        host: String,
     },
     BrowserClosed {
         tab_id: u64,
@@ -61,17 +66,20 @@ impl ExcaliburClientHandle {
 struct ClientContext {
     tab_id: u64,
     handle: ExcaliburClientHandle,
+    blocker: Arc<DomainBlocker>,
     event_tx: Sender<CefEvent>,
 }
 
 pub fn build_client(
     tab_id: u64,
     handle: ExcaliburClientHandle,
+    blocker: Arc<DomainBlocker>,
     event_tx: Sender<CefEvent>,
 ) -> Client {
     let ctx = Arc::new(ClientContext {
         tab_id,
         handle,
+        blocker,
         event_tx,
     });
     ExcaliburClient::new(ctx)
@@ -93,6 +101,10 @@ wrap_client! {
 
         fn load_handler(&self) -> Option<LoadHandler> {
             Some(ExcaliburLoadHandler::new(self.ctx.clone()))
+        }
+
+        fn request_handler(&self) -> Option<RequestHandler> {
+            Some(ExcaliburRequestHandler::new(self.ctx.clone()))
         }
     }
 }
@@ -171,6 +183,61 @@ wrap_load_handler! {
                 can_go_back: can_go_back != 0,
                 can_go_forward: can_go_forward != 0,
             });
+        }
+    }
+}
+
+wrap_request_handler! {
+    struct ExcaliburRequestHandler {
+        ctx: Arc<ClientContext>,
+    }
+
+    impl RequestHandler {
+        fn resource_request_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            is_navigation: ::std::os::raw::c_int,
+            _is_download: ::std::os::raw::c_int,
+            _request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+        ) -> Option<ResourceRequestHandler> {
+            let is_main_nav =
+                is_navigation != 0 && frame.is_some_and(|f| cef::ImplFrame::is_main(f) != 0);
+            if is_main_nav {
+                return None;
+            }
+            Some(ExcaliburResourceRequestHandler::new(self.ctx.clone()))
+        }
+    }
+}
+
+wrap_resource_request_handler! {
+    struct ExcaliburResourceRequestHandler {
+        ctx: Arc<ClientContext>,
+    }
+
+    impl ResourceRequestHandler {
+        fn on_before_resource_load(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _callback: Option<&mut Callback>,
+        ) -> ReturnValue {
+            let Some(request) = request else {
+                return ReturnValue::CONTINUE;
+            };
+            let url = CefString::from(&request.url()).to_string();
+            if let Some(host) = self.ctx.blocker.should_block_url(&url) {
+                let _ = self.ctx.event_tx.send(CefEvent::RequestBlocked {
+                    tab_id: self.ctx.tab_id,
+                    host,
+                });
+                return ReturnValue::CANCEL;
+            }
+            ReturnValue::CONTINUE
         }
     }
 }

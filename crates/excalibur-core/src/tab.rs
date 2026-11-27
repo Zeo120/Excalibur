@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Minimal tab state tracked by the host shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,6 +8,8 @@ pub struct TabInfo {
     pub title: String,
     pub pinned: bool,
     pub is_loading: bool,
+    pub is_sleeping: bool,
+    pub blocked_count: u64,
     pub can_go_back: bool,
     pub can_go_forward: bool,
     pub browser_created: bool,
@@ -40,6 +42,8 @@ impl TabManager {
             url,
             pinned: false,
             is_loading: false,
+            is_sleeping: false,
+            blocked_count: 0,
             can_go_back: false,
             can_go_forward: false,
             browser_created: false,
@@ -59,7 +63,7 @@ impl TabManager {
         self.active_tab().map(|tab| tab.id)
     }
 
-    /// Selects a tab by ID and updates its `last_active_at` timestamp.
+    /// Selects a tab by ID, wakes it if sleeping, and updates `last_active_at`.
     pub fn select_tab(&mut self, id: u64) -> bool {
         let Some(pos) = self.tabs.iter().position(|tab| tab.id == id) else {
             return false;
@@ -70,10 +74,11 @@ impl TabManager {
         }
         self.active_index = Some(pos);
         self.tabs[pos].last_active_at = now;
+        self.tabs[pos].is_sleeping = false;
         true
     }
 
-    /// Cycles active selection forward (`delta > 0`) or backward (`delta < 0`).
+    /// Cycles active selection forward or backward.
     pub fn cycle_tab(&mut self, forward: bool) -> Option<u64> {
         if self.tabs.is_empty() {
             return None;
@@ -96,19 +101,77 @@ impl TabManager {
         let active_id = self.active_tab_id();
         let new_pinned = !self.tabs[pos].pinned;
         self.tabs[pos].pinned = new_pinned;
+        if new_pinned {
+            self.tabs[pos].is_sleeping = false;
+        }
 
         let tab = self.tabs.remove(pos);
-        let insert_at = if new_pinned {
-            self.tabs.iter().filter(|t| t.pinned).count()
-        } else {
-            self.tabs.iter().filter(|t| t.pinned).count()
-        };
+        let insert_at = self.tabs.iter().filter(|t| t.pinned).count();
         self.tabs.insert(insert_at, tab);
 
         if let Some(aid) = active_id {
             self.active_index = self.tabs.iter().position(|t| t.id == aid);
         }
         Some(new_pinned)
+    }
+
+    /// Returns IDs of background, unpinned, awake tabs that have exceeded `timeout`.
+    pub fn tabs_eligible_to_sleep(&self, timeout: Duration) -> Vec<u64> {
+        let now = Instant::now();
+        let active_id = self.active_tab_id();
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                Some(tab.id) != active_id
+                    && !tab.pinned
+                    && !tab.is_sleeping
+                    && now.duration_since(tab.last_active_at) >= timeout
+            })
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    /// Returns IDs of all non-active, unpinned, awake tabs for manual sleep-all.
+    pub fn idle_sleepable_ids(&self) -> Vec<u64> {
+        let active_id = self.active_tab_id();
+        self.tabs
+            .iter()
+            .filter(|tab| Some(tab.id) != active_id && !tab.pinned && !tab.is_sleeping)
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    /// Marks a tab as sleeping after its CEF browser has been closed to free RAM.
+    pub fn mark_sleeping(&mut self, id: u64) -> bool {
+        let Some(tab) = self.tab_mut(id) else {
+            return false;
+        };
+        tab.is_sleeping = true;
+        tab.is_loading = false;
+        tab.browser_created = false;
+        true
+    }
+
+    /// Wakes a sleeping tab and updates its activity timestamp.
+    pub fn wake_tab(&mut self, id: u64) -> bool {
+        let Some(tab) = self.tab_mut(id) else {
+            return false;
+        };
+        tab.is_sleeping = false;
+        tab.last_active_at = Instant::now();
+        true
+    }
+
+    /// Increments the blocked tracker counter for `id`.
+    pub fn increment_blocked(&mut self, id: u64) {
+        if let Some(tab) = self.tab_mut(id) {
+            tab.blocked_count = tab.blocked_count.saturating_add(1);
+        }
+    }
+
+    /// Returns the total blocked requests across all open tabs.
+    pub fn total_blocked_count(&self) -> u64 {
+        self.tabs.iter().map(|t| t.blocked_count).sum()
     }
 
     /// Returns a mutable reference to a tab by ID.
@@ -142,6 +205,7 @@ impl TabManager {
             }
             if let Some(tab) = self.active_index.and_then(|idx| self.tabs.get_mut(idx)) {
                 tab.last_active_at = Instant::now();
+                tab.is_sleeping = false;
             }
         }
         true
@@ -188,5 +252,32 @@ mod tests {
 
         assert_eq!(mgr.toggle_pin(t2), Some(false));
         assert_eq!(mgr.tabs()[0].id, t2);
+    }
+
+    #[test]
+    fn sleep_and_wake_lifecycle_respects_active_and_pinned() {
+        let mut mgr = TabManager::new();
+        let t1 = mgr.open_tab("https://a.example");
+        let t2 = mgr.open_tab("https://b.example");
+        let t3 = mgr.open_tab("https://c.example");
+        mgr.toggle_pin(t1);
+
+        // Make t2 artificially stale
+        if let Some(tab) = mgr.tab_mut(t2) {
+            tab.last_active_at = Instant::now() - Duration::from_secs(120);
+        }
+
+        let eligible = mgr.tabs_eligible_to_sleep(Duration::from_secs(60));
+        assert_eq!(eligible, vec![t2]);
+        assert!(mgr.mark_sleeping(t2));
+        assert!(mgr.tab(t2).unwrap().is_sleeping);
+        assert!(mgr
+            .tabs_eligible_to_sleep(Duration::from_secs(60))
+            .is_empty());
+
+        // Selecting t2 wakes it automatically, and t3 becomes idle-sleepable
+        assert!(mgr.select_tab(t2));
+        assert!(!mgr.tab(t2).unwrap().is_sleeping);
+        assert_eq!(mgr.idle_sleepable_ids(), vec![t3]);
     }
 }

@@ -800,6 +800,7 @@ name = "excalibur-core"
 version = "0.1.0"
 dependencies = [
  "rusqlite",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

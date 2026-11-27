@@ -1,5 +1,10 @@
 use excalibur_core::{BookmarkEntry, BrowserConfig, HistoryEntry, Storage};
 
+use crate::{
+    icons::{icon_button, IconKind},
+    theme,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveDrawer {
     Bookmarks,
@@ -22,7 +27,8 @@ pub struct DrawerState {
     pub draft_search_template: String,
     pub draft_renderer_limit: String,
     pub draft_sleep_secs: String,
-    pub status_message: Option<String>,
+    pub draft_ad_block: bool,
+    pub status_message: Option<(bool, String)>,
 }
 
 impl DrawerState {
@@ -36,6 +42,7 @@ impl DrawerState {
             draft_search_template: config.search_template.clone(),
             draft_renderer_limit: config.renderer_process_limit.to_string(),
             draft_sleep_secs: config.tab_sleep_timeout_secs.to_string(),
+            draft_ad_block: config.ad_block_enabled,
             status_message: None,
         }
     }
@@ -65,6 +72,7 @@ impl DrawerState {
                 self.draft_search_template = config.search_template.clone();
                 self.draft_renderer_limit = config.renderer_process_limit.to_string();
                 self.draft_sleep_secs = config.tab_sleep_timeout_secs.to_string();
+                self.draft_ad_block = config.ad_block_enabled;
             }
             None => {}
         }
@@ -74,24 +82,39 @@ impl DrawerState {
         let active = self.active?;
         let mut action = None;
 
+        let panel_frame = egui::Frame::NONE
+            .fill(theme::BG_TAB_BAR)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE));
+
         egui::Panel::right("excalibur_drawer")
             .exact_size(320.0)
+            .frame(panel_frame)
             .show(ui, |ui| {
-                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let heading = match active {
                         ActiveDrawer::Bookmarks => "Bookmarks",
                         ActiveDrawer::History => "History",
                         ActiveDrawer::Settings => "Settings",
                     };
-                    ui.strong(heading);
+                    ui.label(
+                        egui::RichText::new(heading)
+                            .size(14.0)
+                            .strong()
+                            .color(theme::TEXT_PRIMARY),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
+                        if icon_button(ui, IconKind::Close, true, false, None)
+                            .on_hover_text("Close panel")
+                            .clicked()
+                        {
                             self.active = None;
                         }
                     });
                 });
+                ui.add_space(4.0);
                 ui.separator();
+                ui.add_space(6.0);
 
                 match active {
                     ActiveDrawer::Bookmarks => {
@@ -114,27 +137,41 @@ impl DrawerState {
         let mut deleted_url = None;
 
         if self.bookmarks.is_empty() {
-            ui.label("No bookmarks yet. Press Ctrl+D on any page.");
+            ui.label(
+                egui::RichText::new(
+                    "No bookmarks saved yet. Click the star icon or press Ctrl+D on any page.",
+                )
+                .color(theme::TEXT_SECONDARY),
+            );
             return None;
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for bm in &self.bookmarks {
                 ui.horizontal(|ui| {
-                    let label = truncate_text(&bm.title, 28);
-                    if ui
-                        .selectable_label(false, label)
-                        .on_hover_text(&bm.url)
-                        .clicked()
-                    {
-                        action = Some(DrawerAction::NavigateActive(bm.url.clone()));
-                    }
+                    ui.vertical(|ui| {
+                        ui.set_max_width(228.0);
+                        if ui
+                            .selectable_label(false, truncate_text(&bm.title, 28))
+                            .on_hover_text(&bm.url)
+                            .clicked()
+                        {
+                            action = Some(DrawerAction::NavigateActive(bm.url.clone()));
+                        }
+                        ui.label(
+                            egui::RichText::new(truncate_text(&bm.url, 36))
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                        if icon_button(ui, IconKind::Close, true, false, None)
+                            .on_hover_text("Remove bookmark")
+                            .clicked()
+                        {
                             deleted_url = Some(bm.url.clone());
                         }
-                        if ui
-                            .small_button("+")
+                        if icon_button(ui, IconKind::Plus, true, false, None)
                             .on_hover_text("Open in new tab")
                             .clicked()
                         {
@@ -142,6 +179,7 @@ impl DrawerState {
                         }
                     });
                 });
+                ui.add_space(4.0);
             }
         });
 
@@ -157,8 +195,8 @@ impl DrawerState {
         ui.horizontal(|ui| {
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.history_query)
-                    .desired_width(210.0)
-                    .hint_text("Search history"),
+                    .desired_width(220.0)
+                    .hint_text("Filter history by URL or title"),
             );
             if resp.changed() {
                 self.history = storage
@@ -170,27 +208,38 @@ impl DrawerState {
                 self.history.clear();
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         if self.history.is_empty() {
-            ui.label("No history entries.");
+            let msg = if self.history_query.trim().is_empty() {
+                "History is empty. Pages appear here once finished loading."
+            } else {
+                "No history entries match your filter."
+            };
+            ui.label(egui::RichText::new(msg).color(theme::TEXT_SECONDARY));
             return None;
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for item in &self.history {
                 ui.horizontal(|ui| {
-                    let label = truncate_text(&item.title, 30);
-                    if ui
-                        .selectable_label(false, label)
-                        .on_hover_text(&item.url)
-                        .clicked()
-                    {
-                        action = Some(DrawerAction::NavigateActive(item.url.clone()));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_max_width(252.0);
                         if ui
-                            .small_button("+")
+                            .selectable_label(false, truncate_text(&item.title, 30))
+                            .on_hover_text(&item.url)
+                            .clicked()
+                        {
+                            action = Some(DrawerAction::NavigateActive(item.url.clone()));
+                        }
+                        ui.label(
+                            egui::RichText::new(truncate_text(&item.url, 40))
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if icon_button(ui, IconKind::Plus, true, false, None)
                             .on_hover_text("Open in new tab")
                             .clicked()
                         {
@@ -198,6 +247,7 @@ impl DrawerState {
                         }
                     });
                 });
+                ui.add_space(4.0);
             }
         });
 
@@ -207,21 +257,40 @@ impl DrawerState {
     fn show_settings(&mut self, ui: &mut egui::Ui) -> Option<DrawerAction> {
         let mut action = None;
 
-        ui.label("Home URL");
-        ui.text_edit_singleline(&mut self.draft_home_url);
-        ui.add_space(6.0);
+        ui.checkbox(
+            &mut self.draft_ad_block,
+            "Enable built-in ad and tracker blocker",
+        );
+        ui.add_space(8.0);
 
-        ui.label("Search template (must contain {query})");
-        ui.text_edit_singleline(&mut self.draft_search_template);
-        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Home URL").color(theme::TEXT_SECONDARY));
+        ui.add(egui::TextEdit::singleline(&mut self.draft_home_url).desired_width(f32::INFINITY));
+        ui.add_space(8.0);
 
-        ui.label("Max renderer processes (1-32, applies on restart)");
-        ui.text_edit_singleline(&mut self.draft_renderer_limit);
-        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new("Search template (requires {query})").color(theme::TEXT_SECONDARY),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut self.draft_search_template)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(8.0);
 
-        ui.label("Idle tab sleep timeout (seconds, min 30)");
-        ui.text_edit_singleline(&mut self.draft_sleep_secs);
-        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new("Max renderer processes (1-32, restart required)")
+                .color(theme::TEXT_SECONDARY),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut self.draft_renderer_limit).desired_width(f32::INFINITY),
+        );
+        ui.add_space(8.0);
+
+        ui.label(
+            egui::RichText::new("Idle tab sleep timeout in seconds (min 30)")
+                .color(theme::TEXT_SECONDARY),
+        );
+        ui.add(egui::TextEdit::singleline(&mut self.draft_sleep_secs).desired_width(f32::INFINITY));
+        ui.add_space(12.0);
 
         if ui.button("Save Settings").clicked() {
             let home = self.draft_home_url.trim();
@@ -236,25 +305,35 @@ impl DrawerState {
                         search_template: search.to_owned(),
                         renderer_process_limit: limit.clamp(1, 32),
                         tab_sleep_timeout_secs: sleep.max(30),
+                        ad_block_enabled: self.draft_ad_block,
                     };
-                    self.status_message = Some("Settings saved.".to_owned());
+                    self.status_message = Some((true, "Settings saved.".to_owned()));
                     action = Some(DrawerAction::SaveSettings(cfg));
                 }
                 (true, _, _, _) => {
-                    self.status_message = Some("Home URL cannot be empty.".to_owned());
+                    self.status_message = Some((false, "Home URL cannot be empty.".to_owned()));
                 }
                 (_, false, _, _) => {
-                    self.status_message = Some("Search template must contain {query}.".to_owned());
+                    self.status_message =
+                        Some((false, "Search template must include {query}.".to_owned()));
                 }
                 _ => {
-                    self.status_message = Some("Invalid numeric value.".to_owned());
+                    self.status_message = Some((
+                        false,
+                        "Enter valid numbers for limits and timeout.".to_owned(),
+                    ));
                 }
             }
         }
 
-        if let Some(msg) = &self.status_message {
-            ui.add_space(6.0);
-            ui.label(msg);
+        if let Some((ok, msg)) = &self.status_message {
+            ui.add_space(8.0);
+            let color = if *ok {
+                theme::STATUS_SUCCESS
+            } else {
+                theme::STATUS_DANGER
+            };
+            ui.label(egui::RichText::new(msg).color(color));
         }
 
         action

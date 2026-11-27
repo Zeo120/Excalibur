@@ -2,6 +2,8 @@
 
 mod app;
 mod drawer;
+mod icons;
+mod theme;
 
 use std::{process::ExitCode, rc::Rc};
 
