@@ -59,6 +59,8 @@ impl ExcaliburBrowserApp {
                 }
                 CefEvent::BrowserCreated { tab_id } => {
                     tracing::info!(tab_id, "CEF child browser created");
+                    self.last_bounds = None;
+                    ctx.request_repaint();
                 }
                 CefEvent::TitleChanged { tab_id, title } => {
                     tracing::info!(tab_id, %title, "Title changed");
@@ -209,6 +211,12 @@ impl eframe::App for ExcaliburBrowserApp {
                                 &url,
                             ) {
                                 Ok(_) => {
+                                    tracing::info!(
+                                        ?rect,
+                                        ppp,
+                                        ?bounds,
+                                        "Spawned CEF child browser"
+                                    );
                                     self.browser_spawned = true;
                                     self.last_bounds = Some(bounds);
                                 }

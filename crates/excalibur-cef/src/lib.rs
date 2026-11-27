@@ -158,7 +158,11 @@ impl CefRuntime {
             width: bounds.2.max(1),
             height: bounds.3.max(1),
         };
-        let window_info = WindowInfo::default().set_as_child(parent_handle, &cef_rect);
+        let window_info = WindowInfo {
+            runtime_style: cef::RuntimeStyle::ALLOY,
+            ..Default::default()
+        }
+        .set_as_child(parent_handle, &cef_rect);
         let browser_settings = BrowserSettings::default();
         let url_cef = CefString::from(url);
 
