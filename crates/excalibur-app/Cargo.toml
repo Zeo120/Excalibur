@@ -1,0 +1,18 @@
+[package]
+name = "excalibur-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "excalibur"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+excalibur-cef = { path = "../excalibur-cef" }
+excalibur-core = { path = "../excalibur-core" }
+raw-window-handle.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

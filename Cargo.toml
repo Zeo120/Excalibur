@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/excalibur-core",
+    "crates/excalibur-cef",
+    "crates/excalibur-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+cef = "158.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow"] }
+egui = "0.37.0"
+raw-window-handle = "0.6.2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -1,0 +1,13 @@
+[package]
+name = "excalibur-cef"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cef.workspace = true
+excalibur-core = { path = "../excalibur-core" }
+raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true

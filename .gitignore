@@ -1,0 +1,12 @@
+/target/
+/cef/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.env
+.env.*
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
