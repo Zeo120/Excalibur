@@ -27,6 +27,15 @@ fn main() -> ExitCode {
         default_hook(info);
     }));
 
+    let is_sub = std::env::args().any(|a| a.starts_with("--type="));
+    if !is_sub {
+        append_diag_log(&format!(
+            "main enter cwd={:?} args={:?}",
+            std::env::current_dir().ok(),
+            std::env::args().collect::<Vec<_>>()
+        ));
+    }
+
     let mut config = BrowserConfig::default();
     if let Some(arg_url) = std::env::args().skip(1).find(|arg| !arg.starts_with('-')) {
         config.home_url =
@@ -35,6 +44,9 @@ fn main() -> ExitCode {
 
     let runtime = match bootstrap_cef(&config) {
         Ok(StartupOutcome::SubprocessExited(code)) => {
+            if !is_sub {
+                append_diag_log(&format!("bootstrap_cef SubprocessExited({code})"));
+            }
             return ExitCode::from(u8::try_from(code.max(0)).unwrap_or(1));
         }
         Ok(StartupOutcome::BrowserInitialized(runtime)) => {

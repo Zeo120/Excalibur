@@ -85,12 +85,15 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         std::env::temp_dir().join(format!("excalibur_cef_cache_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cache_dir);
     let root_cache_path = CefString::from(cache_dir.to_string_lossy().as_ref());
+    let log_path = std::env::temp_dir().join("excalibur_cef.log");
+    let log_file = CefString::from(log_path.to_string_lossy().as_ref());
 
     let settings = Settings {
         no_sandbox: 1,
         external_message_pump: 1,
         persist_session_cookies: 0,
         root_cache_path,
+        log_file,
         log_severity: cef::LogSeverity::WARNING,
         ..Default::default()
     };
@@ -102,17 +105,13 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         std::ptr::null_mut(),
     );
     if init_ok != 1 {
+        let exit_code = cef::get_exit_code();
         let _ = std::fs::remove_dir_all(&cache_dir);
         #[cfg(target_os = "windows")]
-        {
-            let exit_code = cef::get_exit_code();
-            if exit_code
-                == sys::cef_resultcode_t::CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED as i32
-            {
-                return Ok(StartupOutcome::SubprocessExited(0));
-            }
+        if exit_code == sys::cef_resultcode_t::CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED as i32 {
+            return Ok(StartupOutcome::SubprocessExited(38));
         }
-        return Err("cef::initialize failed".to_owned());
+        return Err(format!("cef::initialize failed (exit_code={exit_code})"));
     }
 
     Ok(StartupOutcome::BrowserInitialized(CefRuntime {
