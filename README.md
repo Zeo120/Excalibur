@@ -1,23 +1,32 @@
 # Excalibur
 
-Status: Project Pivoted (Research Ongoing)
+Status: Active Pivot to a Low-Memory Chromium-Based Browser
 
-## Overview
+## Background
 
-Excalibur has pivoted from its earlier codebase and architecture. Active research is ongoing, and the AI-assisted implementation direction has changed away from the previous prototype.
+Excalibur began as a research project to build a web browser from scratch without Chromium. During research, the project pivoted to building a Chromium-based browser instead of maintaining a custom rendering engine.
 
-All prior source crates, build configurations, and legacy documentation have been removed from this repository to provide a clean slate while the next phase is researched and defined.
+The repository was cleared to `README.md` so the new Chromium-based implementation can start cleanly without legacy code from the earlier prototype.
 
-## What Changed
+## Architecture Direction
 
-- The earlier effort to build an independent, non-Chromium rendering engine in Rust hit practical compatibility limits with modern web applications (CSS layout, font shaping, WebGL/Wasm, and full JavaScript execution).
-- The subsequent prototype combined a Rust proxy and security tools with an OS WebView (`wry`), `egui`, and a terminal UI.
-- Rather than continuing to patch the old prototype, the project has been reset to `README.md` only while research continues on the pivoted direction.
+- **Host Language**: **Rust** (retained from the original choice). No garbage collector, low baseline memory footprint, and direct control over OS resources.
+- **Rendering Layer**: **Chromium** via a thin native embedding layer (CEF or OS-provided WebView2 on Windows to share the system runtime and reduce disk and RAM duplication), rather than Electron or a Node.js-based shell.
+- **UI Chrome**: Lightweight native UI instead of a second embedded web view for browser tabs, toolbars, and menus.
 
-## Repository State
+## Memory Constraints
 
-- All previous branches, source files, and build artifacts have been cleared.
-- Only this `README.md` remains in the repository until the new architecture and scope are finalized.
+Because Chromium's multi-process model can consume large amounts of RAM, the design prioritizes keeping total memory usage low:
+
+- Keep the browser host process minimal (no secondary JS runtime for UI chrome).
+- Discard or hibernate inactive background tabs after an idle timeout.
+- Cap and consolidate renderer processes where isolation policy allows.
+- Avoid background telemetry, bundled extensions, and unused Chromium services.
+
+## Current State
+
+- Repository reset to `README.md` only.
+- Next step: finalize the Chromium embedding target (`cef` vs `WebView2`) and scaffold the minimal Rust shell and tab manager.
 
 ## License
 
