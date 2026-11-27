@@ -1,19 +1,16 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod drawer;
 
 use std::{process::ExitCode, rc::Rc};
 
 use app::ExcaliburBrowserApp;
 use excalibur_cef::{bootstrap_cef, StartupOutcome};
-use excalibur_core::BrowserConfig;
+use excalibur_core::{BrowserConfig, Storage};
 
 fn main() -> ExitCode {
-    let mut config = BrowserConfig::default();
-    if let Some(arg_url) = std::env::args().skip(1).find(|arg| !arg.starts_with('-')) {
-        config.home_url =
-            excalibur_core::normalize_url_or_search(&arg_url, &config.search_template);
-    }
+    let cli_arg = std::env::args().skip(1).find(|arg| !arg.starts_with('-'));
 
     // Avoid running Chromium from read-only OS directories such as System32.
     if !std::env::args().any(|a| a.starts_with("--type=")) {
@@ -23,6 +20,17 @@ fn main() -> ExitCode {
             }
         }
     }
+
+    let storage = Storage::open_default().unwrap_or_else(|err| {
+        eprintln!("Falling back to in-memory storage: {err}");
+        Storage::open_in_memory().expect("in-memory SQLite initialization")
+    });
+    let config = storage
+        .load_settings(&BrowserConfig::default())
+        .unwrap_or_default();
+    let initial_url = cli_arg
+        .map(|arg| excalibur_core::normalize_url_or_search(&arg, &config.search_template))
+        .unwrap_or_else(|| config.home_url.clone());
 
     let runtime = match bootstrap_cef(&config) {
         Ok(StartupOutcome::SubprocessExited(code)) => {
@@ -58,7 +66,9 @@ fn main() -> ExitCode {
             Ok(Box::new(ExcaliburBrowserApp::new(
                 cc,
                 config,
+                storage,
                 runtime_for_ui,
+                initial_url,
             )))
         }),
     );

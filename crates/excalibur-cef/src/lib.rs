@@ -196,6 +196,51 @@ impl CefRuntime {
         Ok(handle)
     }
 
+    /// Returns `true` if `tab_id` currently has a spawned CEF browser handle.
+    pub fn has_browser(&self, tab_id: u64) -> bool {
+        self.browsers
+            .lock()
+            .ok()
+            .is_some_and(|list| list.iter().any(|h| h.tab_id() == tab_id))
+    }
+
+    /// Shows or hides the child browser view for `tab_id` and notifies Chromium compositor.
+    pub fn set_browser_visible(&self, tab_id: u64, visible: bool) {
+        self.with_browser(tab_id, |browser| {
+            let Some(host) = browser.host() else {
+                return;
+            };
+            host.was_hidden(i32::from(!visible));
+            set_native_child_visible(&host, visible);
+            if visible {
+                host.was_resized();
+            }
+        });
+    }
+
+    /// Requests closure of the CEF browser associated with `tab_id`.
+    pub fn close_browser(&self, tab_id: u64) {
+        if let Some(handle) = self
+            .browsers
+            .lock()
+            .ok()
+            .and_then(|list| list.iter().find(|h| h.tab_id() == tab_id).cloned())
+        {
+            if let Some(browser) = handle.browser() {
+                if let Some(host) = browser.host() {
+                    host.close_browser(1);
+                }
+            }
+        }
+    }
+
+    /// Removes closed handles whose underlying CEF browser has already finished closing.
+    pub fn prune_closed(&self, tab_id: u64) {
+        if let Ok(mut list) = self.browsers.lock() {
+            list.retain(|h| h.tab_id() != tab_id || h.browser().is_some());
+        }
+    }
+
     /// Navigates the browser associated with `tab_id` to `url`.
     pub fn navigate(&self, tab_id: u64, url: &str) {
         self.with_browser(tab_id, |browser| {
@@ -326,6 +371,20 @@ fn resize_native_child(host: &cef::BrowserHost, x: i32, y: i32, width: i32, heig
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn set_native_child_visible(host: &cef::BrowserHost, visible: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNA};
+    let hwnd = host.window_handle().0;
+    if !hwnd.is_null() {
+        unsafe {
+            ShowWindow(hwnd as _, if visible { SW_SHOWNA } else { SW_HIDE });
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_native_child_visible(_host: &cef::BrowserHost, _visible: bool) {}
 
 #[cfg(not(target_os = "windows"))]
 fn resize_native_child(_host: &cef::BrowserHost, _x: i32, _y: i32, _width: i32, _height: i32) {}
