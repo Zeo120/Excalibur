@@ -103,6 +103,15 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
     );
     if init_ok != 1 {
         let _ = std::fs::remove_dir_all(&cache_dir);
+        #[cfg(target_os = "windows")]
+        {
+            let exit_code = cef::get_exit_code();
+            if exit_code
+                == sys::cef_resultcode_t::CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED as i32
+            {
+                return Ok(StartupOutcome::SubprocessExited(0));
+            }
+        }
         return Err("cef::initialize failed".to_owned());
     }
 
