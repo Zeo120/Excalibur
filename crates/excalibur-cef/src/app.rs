@@ -78,6 +78,7 @@ wrap_app! {
 
             // Strip background services and cap renderer proliferation to limit baseline RAM.
             for switch in [
+                "do-not-de-elevate",
                 "disable-background-networking",
                 "disable-sync",
                 "disable-component-update",
