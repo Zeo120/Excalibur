@@ -41,6 +41,18 @@ pub enum StartupOutcome {
     BrowserInitialized(CefRuntime),
 }
 
+fn diag(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("excalibur_diag.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[cef pid={}] {msg}", std::process::id());
+    }
+}
+
 /// Initializes the CEF API, handles helper sub-processes, or boots the main browser process.
 pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
     #[cfg(target_os = "macos")]
@@ -68,6 +80,9 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
 
     let type_switch = CefString::from("type");
     let is_browser_process = cmd_line.has_switch(Some(&type_switch)) != 1;
+    if is_browser_process {
+        diag("before execute_process");
+    }
 
     let sub_ret = execute_process(
         Some(args.as_main_args()),
@@ -77,6 +92,7 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
     if !is_browser_process {
         return Ok(StartupOutcome::SubprocessExited(sub_ret.max(0)));
     }
+    diag(&format!("after execute_process sub_ret={sub_ret}"));
     if sub_ret >= 0 {
         return Ok(StartupOutcome::SubprocessExited(sub_ret));
     }
@@ -94,16 +110,21 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         persist_session_cookies: 0,
         root_cache_path,
         log_file,
-        log_severity: cef::LogSeverity::WARNING,
+        log_severity: cef::LogSeverity::VERBOSE,
         ..Default::default()
     };
 
+    diag("before cef::initialize");
     let init_ok = initialize(
         Some(args.as_main_args()),
         Some(&settings),
         Some(&mut app),
         std::ptr::null_mut(),
     );
+    diag(&format!(
+        "after cef::initialize init_ok={init_ok} exit_code={}",
+        cef::get_exit_code()
+    ));
     if init_ok != 1 {
         let exit_code = cef::get_exit_code();
         let _ = std::fs::remove_dir_all(&cache_dir);
