@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("excalibur=info")),
         )
         .try_init();
 
@@ -40,6 +40,8 @@ fn main() -> ExitCode {
             .with_min_inner_size([640.0, 420.0]),
         ..Default::default()
     };
+
+    tracing::info!(pid = std::process::id(), url = %config.home_url, "Starting Excalibur UI");
 
     let runtime_for_ui = runtime.clone();
     let ui_result = eframe::run_native(

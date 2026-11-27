@@ -25,6 +25,7 @@ pub struct CefLibraryGuard;
 /// Controls CEF initialization, message pumping, and browser instances.
 pub struct CefRuntime {
     _library_guard: CefLibraryGuard,
+    cache_dir: std::path::PathBuf,
     shared_state: Arc<SharedAppState>,
     event_rx: std::sync::mpsc::Receiver<CefEvent>,
     event_tx: std::sync::mpsc::Sender<CefEvent>,
@@ -80,7 +81,8 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         return Ok(StartupOutcome::SubprocessExited(sub_ret));
     }
 
-    let cache_dir = std::env::temp_dir().join("excalibur_cef_cache");
+    let cache_dir =
+        std::env::temp_dir().join(format!("excalibur_cef_cache_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cache_dir);
     let root_cache_path = CefString::from(cache_dir.to_string_lossy().as_ref());
 
@@ -100,11 +102,13 @@ pub fn bootstrap_cef(config: &BrowserConfig) -> Result<StartupOutcome, String> {
         std::ptr::null_mut(),
     );
     if init_ok != 1 {
+        let _ = std::fs::remove_dir_all(&cache_dir);
         return Err("cef::initialize failed".to_owned());
     }
 
     Ok(StartupOutcome::BrowserInitialized(CefRuntime {
         _library_guard: library_guard,
+        cache_dir,
         shared_state,
         event_rx,
         event_tx,
@@ -261,6 +265,7 @@ impl CefRuntime {
         drop(handles);
 
         shutdown();
+        let _ = std::fs::remove_dir_all(&self.cache_dir);
     }
 
     fn with_browser(&self, tab_id: u64, f: impl FnOnce(Browser)) {
