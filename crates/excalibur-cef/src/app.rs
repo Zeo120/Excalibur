@@ -75,7 +75,6 @@ wrap_app! {
             if !is_browser_process {
                 return;
             }
-            crate::diag("on_before_command_line_processing (browser)");
 
             // Strip background services and cap renderer proliferation to limit baseline RAM.
             for switch in [
@@ -114,7 +113,6 @@ wrap_browser_process_handler! {
 
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
-            crate::diag("on_context_initialized fired");
             self.state.notify_context_initialized();
         }
 
