@@ -632,7 +632,7 @@ impl eframe::App for ExcaliburBrowserApp {
 
                     ui.add_space(4.0);
 
-                    let right_cluster_width = 310.0;
+                    let right_cluster_width = if tab_blocked > 0 { 264.0 } else { 236.0 };
                     let avail = (ui.available_width() - right_cluster_width).max(120.0);
                     let has_omnibox_focus = ui.ctx().memory(|m| m.has_focus(self.omnibox_id));
                     let field_stroke = if has_omnibox_focus {
@@ -713,12 +713,19 @@ impl eframe::App for ExcaliburBrowserApp {
                     }
 
                     let ram_label = format!("{:.0} MB", self.memory.total_mb);
+                    let ram_color = if self.memory.total_mb >= 700.0 {
+                        theme::STATUS_DANGER
+                    } else if self.memory.total_mb >= 350.0 {
+                        theme::STATUS_WARNING
+                    } else {
+                        theme::STATUS_SUCCESS
+                    };
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(ram_label)
                                 .monospace()
                                 .size(11.0)
-                                .color(theme::TEXT_SECONDARY),
+                                .color(ram_color),
                         )
                         .selectable(false),
                     )
@@ -826,23 +833,42 @@ impl eframe::App for ExcaliburBrowserApp {
                 };
                 if is_sleeping {
                     ui.centered_and_justified(|ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(120.0);
-                            ui.label(
-                                egui::RichText::new("Tab is asleep to save memory")
-                                    .size(16.0)
-                                    .color(theme::TEXT_PRIMARY),
-                            );
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(&current_url)
+                        let card = egui::Frame::NONE
+                            .fill(theme::BG_ELEVATED)
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .inner_margin(egui::Margin::same(24))
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE));
+                        card.show(ui, |ui| {
+                            ui.set_max_width(420.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Tab is asleep to save memory")
+                                        .size(16.0)
+                                        .strong()
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new(crate::drawer::truncate_text(
+                                        &current_url,
+                                        64,
+                                    ))
                                     .size(12.0)
                                     .color(theme::TEXT_SECONDARY),
-                            );
-                            ui.add_space(12.0);
-                            if ui.button("Wake Tab").clicked() {
-                                self.wake_tab(tab_id);
-                            }
+                                );
+                                ui.add_space(16.0);
+                                let wake_btn = egui::Button::new(
+                                    egui::RichText::new("Wake Tab")
+                                        .color(theme::TEXT_PRIMARY)
+                                        .strong(),
+                                )
+                                .fill(theme::ACCENT_SOFT)
+                                .stroke(egui::Stroke::new(1.0, theme::ACCENT))
+                                .min_size(egui::vec2(112.0, 30.0));
+                                if ui.add(wake_btn).clicked() {
+                                    self.wake_tab(tab_id);
+                                }
+                            });
                         });
                     });
                     return;

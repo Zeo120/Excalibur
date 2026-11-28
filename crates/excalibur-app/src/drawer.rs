@@ -161,7 +161,7 @@ impl DrawerState {
                         ui.label(
                             egui::RichText::new(truncate_text(&bm.url, 36))
                                 .size(11.0)
-                                .color(theme::TEXT_MUTED),
+                                .color(theme::TEXT_SECONDARY),
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -203,7 +203,11 @@ impl DrawerState {
                     .search_history(&self.history_query, 100)
                     .unwrap_or_default();
             }
-            if ui.button("Clear").clicked() {
+            if ui
+                .button("Clear")
+                .on_hover_text("Clear all browsing history")
+                .clicked()
+            {
                 let _ = storage.clear_history();
                 self.history.clear();
             }
@@ -235,7 +239,7 @@ impl DrawerState {
                         ui.label(
                             egui::RichText::new(truncate_text(&item.url, 40))
                                 .size(11.0)
-                                .color(theme::TEXT_MUTED),
+                                .color(theme::TEXT_SECONDARY),
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -257,84 +261,120 @@ impl DrawerState {
     fn show_settings(&mut self, ui: &mut egui::Ui) -> Option<DrawerAction> {
         let mut action = None;
 
-        ui.checkbox(
-            &mut self.draft_ad_block,
-            "Enable built-in ad and tracker blocker",
-        );
-        ui.add_space(8.0);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.checkbox(
+                &mut self.draft_ad_block,
+                "Enable built-in ad and tracker blocker",
+            );
+            ui.add_space(8.0);
 
-        ui.label(egui::RichText::new("Home URL").color(theme::TEXT_SECONDARY));
-        ui.add(egui::TextEdit::singleline(&mut self.draft_home_url).desired_width(f32::INFINITY));
-        ui.add_space(8.0);
+            ui.label(egui::RichText::new("Home URL").color(theme::TEXT_SECONDARY));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.draft_home_url).desired_width(f32::INFINITY),
+            );
+            ui.add_space(8.0);
 
-        ui.label(
-            egui::RichText::new("Search template (requires {query})").color(theme::TEXT_SECONDARY),
-        );
-        ui.add(
-            egui::TextEdit::singleline(&mut self.draft_search_template)
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("Search template (requires {query})")
+                    .color(theme::TEXT_SECONDARY),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.draft_search_template)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(8.0);
 
-        ui.label(
-            egui::RichText::new("Max renderer processes (1-32, restart required)")
-                .color(theme::TEXT_SECONDARY),
-        );
-        ui.add(
-            egui::TextEdit::singleline(&mut self.draft_renderer_limit).desired_width(f32::INFINITY),
-        );
-        ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("Max renderer processes (1-32, restart required)")
+                    .color(theme::TEXT_SECONDARY),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.draft_renderer_limit)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(8.0);
 
-        ui.label(
-            egui::RichText::new("Idle tab sleep timeout in seconds (min 30)")
-                .color(theme::TEXT_SECONDARY),
-        );
-        ui.add(egui::TextEdit::singleline(&mut self.draft_sleep_secs).desired_width(f32::INFINITY));
-        ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("Idle tab sleep timeout in seconds (min 30)")
+                    .color(theme::TEXT_SECONDARY),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.draft_sleep_secs).desired_width(f32::INFINITY),
+            );
+            ui.add_space(12.0);
 
-        if ui.button("Save Settings").clicked() {
-            let home = self.draft_home_url.trim();
-            let search = self.draft_search_template.trim();
-            let limit = self.draft_renderer_limit.trim().parse::<u32>();
-            let sleep = self.draft_sleep_secs.trim().parse::<u64>();
+            ui.horizontal(|ui| {
+                let save_btn = egui::Button::new(
+                    egui::RichText::new("Save Settings")
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                )
+                .fill(theme::ACCENT_SOFT)
+                .stroke(egui::Stroke::new(1.0, theme::ACCENT));
 
-            match (home.is_empty(), search.contains("{query}"), limit, sleep) {
-                (false, true, Ok(limit), Ok(sleep)) => {
-                    let cfg = BrowserConfig {
-                        home_url: home.to_owned(),
-                        search_template: search.to_owned(),
-                        renderer_process_limit: limit.clamp(1, 32),
-                        tab_sleep_timeout_secs: sleep.max(30),
-                        ad_block_enabled: self.draft_ad_block,
-                    };
-                    self.status_message = Some((true, "Settings saved.".to_owned()));
-                    action = Some(DrawerAction::SaveSettings(cfg));
+                if ui.add(save_btn).clicked() {
+                    let home = self.draft_home_url.trim();
+                    let search = self.draft_search_template.trim();
+                    let limit = self.draft_renderer_limit.trim().parse::<u32>();
+                    let sleep = self.draft_sleep_secs.trim().parse::<u64>();
+
+                    match (home.is_empty(), search.contains("{query}"), limit, sleep) {
+                        (false, true, Ok(limit), Ok(sleep)) => {
+                            let cfg = BrowserConfig {
+                                home_url: home.to_owned(),
+                                search_template: search.to_owned(),
+                                renderer_process_limit: limit.clamp(1, 32),
+                                tab_sleep_timeout_secs: sleep.max(30),
+                                ad_block_enabled: self.draft_ad_block,
+                            };
+                            self.status_message = Some((true, "Settings saved.".to_owned()));
+                            action = Some(DrawerAction::SaveSettings(cfg));
+                        }
+                        (true, _, _, _) => {
+                            self.status_message =
+                                Some((false, "Home URL cannot be empty.".to_owned()));
+                        }
+                        (_, false, _, _) => {
+                            self.status_message =
+                                Some((false, "Search template must include {query}.".to_owned()));
+                        }
+                        _ => {
+                            self.status_message = Some((
+                                false,
+                                "Enter valid numbers for limits and timeout.".to_owned(),
+                            ));
+                        }
+                    }
                 }
-                (true, _, _, _) => {
-                    self.status_message = Some((false, "Home URL cannot be empty.".to_owned()));
-                }
-                (_, false, _, _) => {
-                    self.status_message =
-                        Some((false, "Search template must include {query}.".to_owned()));
-                }
-                _ => {
+
+                if ui
+                    .button("Reset Defaults")
+                    .on_hover_text("Restore default settings in form")
+                    .clicked()
+                {
+                    let defaults = BrowserConfig::default();
+                    self.draft_home_url = defaults.home_url;
+                    self.draft_search_template = defaults.search_template;
+                    self.draft_renderer_limit = defaults.renderer_process_limit.to_string();
+                    self.draft_sleep_secs = defaults.tab_sleep_timeout_secs.to_string();
+                    self.draft_ad_block = defaults.ad_block_enabled;
                     self.status_message = Some((
-                        false,
-                        "Enter valid numbers for limits and timeout.".to_owned(),
+                        true,
+                        "Defaults loaded. Click Save Settings to apply.".to_owned(),
                     ));
                 }
-            }
-        }
+            });
 
-        if let Some((ok, msg)) = &self.status_message {
-            ui.add_space(8.0);
-            let color = if *ok {
-                theme::STATUS_SUCCESS
-            } else {
-                theme::STATUS_DANGER
-            };
-            ui.label(egui::RichText::new(msg).color(color));
-        }
+            if let Some((ok, msg)) = &self.status_message {
+                ui.add_space(8.0);
+                let color = if *ok {
+                    theme::STATUS_SUCCESS
+                } else {
+                    theme::STATUS_DANGER
+                };
+                ui.label(egui::RichText::new(msg).color(color));
+            }
+        });
 
         action
     }
