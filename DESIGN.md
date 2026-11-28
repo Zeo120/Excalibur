@@ -1,54 +1,51 @@
 ---
 name: Excalibur
-description: High-contrast dark native egui chrome for a low-memory Rust + Chromium browser.
+description: Zen-inspired dark zinc native egui chrome with switchable vertical sidebar and compact top bar.
 colors:
-  bg-canvas: "#09090d"
-  bg-tab-bar: "#0c0c11"
-  bg-toolbar: "#111118"
-  bg-elevated: "#1a1b24"
-  bg-hover: "#242632"
-  bg-field: "#07070a"
-  border-subtle: "rgba(255, 255, 255, 0.08)"
-  border-strong: "rgba(255, 255, 255, 0.16)"
-  text-primary: "#ececf1"
-  text-secondary: "#9494a3"
-  text-muted: "#5e5e6e"
-  accent: "#38bdf8"
-  accent-soft: "rgba(14, 48, 66, 0.71)"
-  status-success: "#3dd68c"
-  status-warning: "#e5a93c"
-  status-danger: "#f05252"
+  bg-shell: "#141417"
+  bg-surface: "#1c1c21"
+  bg-pill: "#232329"
+  bg-hover: "#2e2e36"
+  bg-field: "#0f0f12"
+  border-hairline: "rgba(255, 255, 255, 0.06)"
+  border-strong: "rgba(255, 255, 255, 0.15)"
+  text-primary: "#f2f2f5"
+  text-secondary: "#a1a1ae"
+  text-muted: "#71717e"
+  accent: "#eb7b54"
+  accent-soft: "rgba(52, 29, 22, 0.82)"
+  status-success: "#4ad492"
+  status-warning: "#ebb347"
+  status-danger: "#ef5f5f"
 rounded:
-  control: "4px"
+  control: "7px"
+  pill: "8px"
+  viewport: "6px"
 spacing:
   item: "6px"
-  button-padding: "4px 8px"
-  tab-strip-height: "34px"
-  toolbar-height: "40px"
+  button-padding: "5px 8px"
+  sidebar-width: "240px"
+  compact-bar-height: "42px"
+  viewport-inset: "6px"
 components:
   tab-active:
-    backgroundColor: "{colors.bg-toolbar}"
+    backgroundColor: "{colors.bg-pill}"
     textColor: "{colors.text-primary}"
     rounded: "{rounded.control}"
-  tab-inactive:
-    backgroundColor: "{colors.bg-tab-bar}"
-    textColor: "{colors.text-secondary}"
-    rounded: "{rounded.control}"
-  omnibox:
-    backgroundColor: "{colors.bg-field}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.control}"
-    padding: "4px 8px"
-  toolbar-button:
-    backgroundColor: "{colors.bg-elevated}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.control}"
-    padding: "4px 8px"
-  toolbar-button-hover:
+  tab-hover:
     backgroundColor: "{colors.bg-hover}"
     textColor: "{colors.text-primary}"
-  toolbar-button-active:
-    backgroundColor: "{colors.accent-soft}"
+    rounded: "{rounded.control}"
+  url-pill:
+    backgroundColor: "{colors.bg-pill}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.pill}"
+    padding: "4px 8px"
+  icon-button:
+    textColor: "{colors.text-secondary}"
+    rounded: "{rounded.control}"
+  icon-button-hover:
+    backgroundColor: "{colors.bg-hover}"
     textColor: "{colors.text-primary}"
 ---
 
@@ -56,74 +53,75 @@ components:
 
 ## Overview
 
-Excalibur uses a compact, high-contrast dark interface built in `egui` (`crates/excalibur-app/src/theme.rs`). Every surface is functional browser chrome sitting directly above the native CEF child viewport: dark neutral layering separates the tab strip, toolbar, inputs, and side drawer without drop shadows, decorative gradients, or filler copy.
+Excalibur uses a warm dark zinc shell modeled on Zen Browser's quiet ergonomics (`crates/excalibur-app/src/theme.rs`). Chrome lives primarily in a collapsible `240pt` vertical sidebar (switchable to a single `42pt` compact top bar with `Ctrl+\` or `Alt+S`) while the embedded Chromium viewport sits inside a `6px` inset frame. Idle controls remain borderless and reveal tonal pill fills only when hovered or selected.
 
 Key characteristics:
-- Operate-mode precision: small vertical footprint (`34pt` tab bar + `40pt` toolbar = `74pt` total top chrome).
-- Flat tonal separation with hairline `1px` borders instead of box shadows.
-- Custom `1.5px`-stroke vector icons (`crates/excalibur-app/src/icons.rs`) rather than ASCII placeholders or emojis.
-- Tabular numeric telemetry for live RAM usage and blocked-request counters.
+- Warm zinc dark palette (`#141417` shell, `#1c1c21` surface, `#232329` pills) with a restrained warm coral accent (`#eb7b54`).
+- Native Windows `Segoe UI` and `Consolas` fonts loaded when available (`install_system_fonts`).
+- Unified URL pill folding origin lock status, omnibox input, tracker blocker toggle/count, and bookmark star into one control.
+- Hover-only tab close buttons, compact pinned-tab tiles, and domain monograms instead of text prefixes.
 
 ## Colors
 
 Defined in `crates/excalibur-app/src/theme.rs`:
 
-- **Surfaces (dark to elevated)**:
-  - `BG_CANVAS` (`#09090d`): Base viewport / sleeping-tab backdrop.
-  - `BG_FIELD` (`#07070a`): Recessed text inputs (omnibox, drawer search/settings inputs).
-  - `BG_TAB_BAR` (`#0c0c11`): Top tab strip background.
-  - `BG_TOOLBAR` (`#111118`): Main navigation toolbar and active tab fill.
-  - `BG_ELEVATED` (`#1a1b24`): Buttons, cards, and side drawer (`Bookmarks`, `History`, `Settings`).
-  - `BG_HOVER` (`#242632`): Hovered controls and list rows.
+- **Surfaces**:
+  - `BG_SHELL` (`#141417`): Outer browser shell, left vertical sidebar, compact top bar, and `6px` viewport gutter.
+  - `BG_SURFACE` (`#1c1c21`): Side drawers (`Bookmarks`, `History`, `Settings`), sleeping-tab restore card, inactive pinned tiles, and domain monogram chips.
+  - `BG_PILL` (`#232329`): Integrated URL pill, active tab pill, and drawer item cards.
+  - `BG_HOVER` (`#2e2e36`): Borderless hover surface for tabs and icon buttons.
+  - `BG_FIELD` (`#0f0f12`): Recessed text inputs and sleeping-tab backdrop.
 - **Borders**:
-  - `BORDER_SUBTLE` (`Color32::from_rgba_premultiplied(255, 255, 255, 20)`): Default hairline dividers and inactive control strokes.
-  - `BORDER_STRONG` (`Color32::from_rgba_premultiplied(255, 255, 255, 42)`): Hovered control borders.
+  - `BORDER_HAIRLINE` (`Color32::from_rgba_premultiplied(255, 255, 255, 16)`): Subtle dividers, unfocused URL pill stroke, and `1px` viewport frame.
+  - `BORDER_STRONG` (`Color32::from_rgba_premultiplied(255, 255, 255, 38)`): Active tab stroke.
 - **Text**:
-  - `TEXT_PRIMARY` (`#ececf1`): Active tab titles, primary labels, omnibox URL text.
-  - `TEXT_SECONDARY` (`#9494a3`): Inactive tabs, secondary URL lines, helper text.
-  - `TEXT_MUTED` (`#5e5e6e`): Disabled icons, sleeping-tab hints, empty-state metadata.
+  - `TEXT_PRIMARY` (`#f2f2f5`): Active tabs, headings, and URL text.
+  - `TEXT_SECONDARY` (`#a1a1ae`): Inactive tabs, URL subtitles, and secondary labels.
+  - `TEXT_MUTED` (`#71717e`): Disabled states and sleeping tabs.
 - **Accent & Semantic Status**:
-  - `ACCENT` (`#38bdf8`): Active tab top indicator bar, focused omnibox border, selection stroke.
-  - `ACCENT_SOFT` (`Color32::from_rgba_premultiplied(14, 48, 66, 180)`): Active/toggled button and selection fill.
-  - `STATUS_SUCCESS` (`#3dd68c`): Shield enabled state, low memory readout, valid save confirmation.
-  - `STATUS_WARNING` (`#e5a93c`): Bookmarked star icon, sleeping-tab indicator, elevated memory warning.
-  - `STATUS_DANGER` (`#f05252`): Validation errors, high memory alert, destructive clear action.
+  - `ACCENT` (`#eb7b54`): Focused URL pill border, loading indicator dot, active pin/monogram highlight, and primary action borders.
+  - `ACCENT_SOFT` (`Color32::from_rgba_premultiplied(52, 29, 22, 210)`): Active button fill and primary button fill.
+  - `STATUS_SUCCESS` (`#4ad492`): HTTPS lock indicator, shield enabled state, low RAM status dot.
+  - `STATUS_WARNING` (`#ebb347`): Bookmarked star, sleeping-tab moon indicator, elevated RAM dot.
+  - `STATUS_DANGER` (`#ef5f5f`): High RAM dot and validation errors.
 
 ## Typography
 
-- Uses `egui` default proportional UI font for labels, tab titles, and drawer entries.
-- Uses monospace / tabular alignment for live RAM telemetry (`MB` working set) and blocked-request counters so numbers do not jitter during 2-second updates.
-- Hierarchy relies on size and color contrast (`TEXT_PRIMARY` for titles/actions, `TEXT_SECONDARY` for URLs/subtitles) rather than decorative weights or all-caps eyebrows.
+- **Proportional UI**: `Segoe UI` (`C:\Windows\Fonts\segoeui.ttf` on Windows, falling back to `egui` defaults on other platforms).
+- **Monospace Data**: `Consolas` (`C:\Windows\Fonts\consola.ttf` on Windows) used strictly for live RAM (`MB`) readouts and blocked tracker counts.
 
 ## Layout
 
-- **Top Tab Strip** (`34pt` height): Horizontal scrollable tab list with active top accent bar, pin/sleep/loading indicators, close button, and `+` new-tab button.
-- **Navigation Toolbar** (`40pt` height): Back, Forward, Reload/Stop, expandable Omnibox (`Ctrl+L`), Bookmark star (`Ctrl+D`), Shield toggle + blocked counter, RAM telemetry pill (with hover process breakdown), `Sleep Idle` action, and Drawer toggles (`Bookmarks`, `History`, `Settings`).
-- **Central Viewport**: `egui::CentralPanel::no_frame()` hosts the native OS child CEF browser window when the active tab is awake, or an inline centered restore card when the active tab is sleeping.
-- **Right Side Drawer**: Optional `egui::Panel::right` for Bookmarks, History, and Settings without blocking the main toolbar.
-- **Spacing**: `item_spacing = (6.0, 6.0)`, `button_padding = (8.0, 4.0)`.
+- **Sidebar Mode (default, `240pt` left panel)**:
+  - Top row: Sidebar toggle (`Ctrl+\` / `Alt+S`), Back, Forward, Reload/Stop, and `+` New Tab.
+  - Full-width URL pill directly beneath the navigation row.
+  - Optional wrapped grid of pinned-tab tiles (`68x32pt`).
+  - Scrollable vertical tab list (`30pt` rows) with domain monograms, hover-only close buttons, and an inline `+ New Tab` action row.
+  - Bottom utility footer: colored RAM status dot + tabular `MB` readout on the left; `Sleep Idle`, `Bookmarks`, `History`, and `Settings` buttons on the right.
+- **Compact Mode (`42pt` single top bar)**:
+  - Single horizontal row holding Sidebar toggle, Back/Forward/Reload, compact URL pill (`200..320pt`), horizontally scrollable tab pills, `+`, RAM readout, and utility icons.
+- **Inset Viewport**:
+  - `CentralPanel` applies a `6px` margin around the embedded CEF browser area with a `1px` `BORDER_HAIRLINE` perimeter.
 
 ## Elevation & Depth
 
-Flat tonal layering with `1px` hairline borders (`BORDER_SUBTLE` / `BORDER_STRONG`). No drop shadows or blur effects are used on chrome panels, tabs, or drawers.
+Flat tonal hierarchy using `BG_SHELL` -> `BG_SURFACE` -> `BG_PILL` -> `BG_HOVER` and `1px` structural hairlines (`BORDER_HAIRLINE`). No drop shadows or decorative blur overlays are used.
 
 ## Shapes
 
-- Uniform `CornerRadius::same(4)` (`4px`) across buttons, tabs, text fields, and cards.
-- Custom vector glyphs in `crates/excalibur-app/src/icons.rs` are drawn with `1.5px` strokes on a pixel-snapped square canvas (`ArrowLeft`, `ArrowRight`, `Reload`, `Close`, `Plus`, `StarOutline`, `StarFilled`, `Shield`, `Bookmarks`, `History`, `Settings`, `Moon`, `Pin`).
+- Controls and tabs use `CornerRadius::same(7)`; URL pills use `CornerRadius::same(8)`; viewport framing uses `CornerRadius::same(6)`; sleeping-tab card uses `CornerRadius::same(10)`.
+- Vector icons in `crates/excalibur-app/src/icons.rs` use uniform `1.5px` strokes (`Sidebar`, `Back`, `Forward`, `Reload`, `Stop`, `Plus`, `Close`, `Pin`, `Lock`, `StarOutline`, `StarFilled`, `Shield`, `Sleep`, `Bookmarks`, `History`, `Settings`).
 
 ## Components
 
-- **Icon Button (`icons::icon_button`)**: Compact square hit target using `BG_ELEVATED` (default), `BG_HOVER` (hover), `ACCENT_SOFT` (toggled), and muted stroke when disabled.
-- **Omnibox**: Recessed `BG_FIELD` frame with `1px` `BORDER_SUBTLE` stroke switching to `ACCENT` when focused (`self.omnibox_id`), containing a frameless `TextEdit::singleline`.
-- **Tab Item**: Shows optional pin/sleep/loading state, truncated title, close icon, and right-click context menu (`Pin`/`Unpin`, `Sleep Tab`/`Wake Tab`, `Close Tab`).
-- **Sleeping Tab Restore Card**: Centered `BG_ELEVATED` card inside `BG_CANVAS` displaying the tab title, URL, and a `Wake Tab` action so sleeping tabs stay lightweight until explicitly needed.
-- **RAM Telemetry Readout**: Compact status pill showing total OS working set (`MB`) colored by threshold (`STATUS_SUCCESS` / `STATUS_WARNING` / `STATUS_DANGER`), with per-process-type details on hover.
+- **Icon Button (`icons::icon_button` / `icon_button_sized`)**: Transparent and borderless at rest, revealing `BG_HOVER` pill fill on hover and `ACCENT_SOFT` when selected.
+- **URL Pill**: Houses HTTPS lock icon, select-all-on-focus `TextEdit`, inline `Shield` toggle + blocked counter, and `Star` bookmark button.
+- **Tab Row / Pill**: Displays domain monogram (or loading dot / sleeping moon), truncated title, right-click context menu, middle-click close, and a close `×` target visible only on hover or active state.
+- **Sleeping Tab Card**: Centered `BG_SURFACE` card over `BG_FIELD` backdrop with moon icon, truncated URL, and `Wake Tab` action.
 
 ## Do's and Don'ts
 
-- **Do** keep all top chrome compact (`74pt` combined height) so the CEF web viewport maximizes screen space.
-- **Do** use tokens from `crates/excalibur-app/src/theme.rs` and vector icons from `crates/excalibur-app/src/icons.rs` for any new UI controls.
-- **Do** provide explicit empty states and non-blocking inline feedback in drawers and sleeping-tab views.
-- **Don't** use Unicode emojis, ASCII symbol stand-ins (`<`, `>`, `R`, `X`), drop shadows, or decorative gradients in browser chrome.
-- **Don't** introduce a second webview or heavy modal overlay for settings, history, or telemetry.
+- **Do** keep idle buttons and tabs borderless, reserving strokes for structural dividers, focused inputs, and active tab pills.
+- **Do** fold page-level actions (`Lock`, `Shield`, `Bookmark`) inside the URL pill rather than adding standalone toolbar clutter.
+- **Do** support both Vertical Sidebar Mode and Compact Top Mode cleanly via shared rendering helpers.
+- **Don't** render `[P]` ASCII prefixes, emojis, harsh boxed button grids, or side-accent stripes on rounded tabs.

@@ -4,12 +4,15 @@ use crate::theme;
 
 #[derive(Debug, Clone, Copy)]
 pub enum IconKind {
+    Sidebar,
     Back,
     Forward,
     Reload,
     Stop,
     Plus,
     Close,
+    Pin,
+    Lock,
     StarOutline,
     StarFilled,
     Shield,
@@ -19,7 +22,7 @@ pub enum IconKind {
     Settings,
 }
 
-/// Draws a consistent 26x26px vector icon button with clear hover, active, and disabled states.
+/// Draws a quiet, borderless 26x26px vector icon button with Zen pill hover and soft active states.
 pub fn icon_button(
     ui: &mut Ui,
     kind: IconKind,
@@ -27,7 +30,19 @@ pub fn icon_button(
     selected: bool,
     tint_override: Option<Color32>,
 ) -> Response {
-    let size = vec2(26.0, 26.0);
+    icon_button_sized(ui, kind, 26.0, enabled, selected, tint_override)
+}
+
+/// Draws a sized square vector icon button (e.g. 22px inline inside URL pills, 26px in chrome).
+pub fn icon_button_sized(
+    ui: &mut Ui,
+    kind: IconKind,
+    dim: f32,
+    enabled: bool,
+    selected: bool,
+    tint_override: Option<Color32>,
+) -> Response {
+    let size = vec2(dim, dim);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -48,15 +63,13 @@ pub fn icon_button(
 
         let border = if selected && enabled {
             Stroke::new(1.0, theme::ACCENT)
-        } else if response.hovered() && enabled {
-            Stroke::new(1.0, theme::BORDER_STRONG)
         } else {
             Stroke::NONE
         };
 
         ui.painter().rect(
             rect,
-            CornerRadius::same(4),
+            CornerRadius::same(7),
             bg,
             border,
             egui::StrokeKind::Inside,
@@ -74,7 +87,7 @@ pub fn icon_button(
             theme::TEXT_SECONDARY
         };
 
-        paint_icon(ui.painter(), rect.shrink(6.0), kind, color);
+        paint_icon(ui.painter(), rect.shrink((dim * 0.23).round()), kind, color);
     }
 
     response
@@ -89,6 +102,23 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: IconKind, color: Co
     let stroke = Stroke::new(1.5, color);
 
     match kind {
+        IconKind::Sidebar => {
+            let box_rect = Rect::from_center_size(c, vec2(r * 1.9, r * 1.6));
+            painter.rect_stroke(
+                box_rect,
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            let split_x = box_rect.min.x + box_rect.width() * 0.36;
+            painter.line_segment(
+                [
+                    pos2(split_x, box_rect.min.y + 1.0),
+                    pos2(split_x, box_rect.max.y - 1.0),
+                ],
+                stroke,
+            );
+        }
         IconKind::Back => {
             painter.line_segment([pos2(c.x + r * 0.7, c.y), pos2(c.x - r * 0.7, c.y)], stroke);
             painter.line_segment(
@@ -141,6 +171,46 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: IconKind, color: Co
             painter.line_segment([pos2(c.x - d, c.y - d), pos2(c.x + d, c.y + d)], stroke);
             painter.line_segment([pos2(c.x + d, c.y - d), pos2(c.x - d, c.y + d)], stroke);
         }
+        IconKind::Pin => {
+            painter.line_segment(
+                [
+                    pos2(c.x - r * 0.4, c.y - r * 0.75),
+                    pos2(c.x + r * 0.4, c.y - r * 0.75),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [pos2(c.x, c.y - r * 0.75), pos2(c.x, c.y + r * 0.1)],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    pos2(c.x - r * 0.55, c.y + r * 0.1),
+                    pos2(c.x + r * 0.55, c.y + r * 0.1),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [pos2(c.x, c.y + r * 0.1), pos2(c.x, c.y + r * 0.85)],
+                stroke,
+            );
+        }
+        IconKind::Lock => {
+            let body = Rect::from_center_size(pos2(c.x, c.y + r * 0.25), vec2(r * 1.2, r * 0.95));
+            painter.rect_stroke(
+                body,
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            let arc: Vec<_> = (0..=8)
+                .map(|i| {
+                    let a = std::f32::consts::PI + (i as f32 / 8.0) * std::f32::consts::PI;
+                    pos2(c.x + r * 0.36 * a.cos(), body.min.y + r * 0.38 * a.sin())
+                })
+                .collect();
+            painter.add(egui::Shape::line(arc, stroke));
+        }
         IconKind::StarOutline | IconKind::StarFilled => {
             let mut pts = Vec::with_capacity(10);
             for i in 0..10 {
@@ -172,7 +242,6 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: IconKind, color: Co
             painter.add(egui::Shape::line(pts, stroke));
         }
         IconKind::Sleep => {
-            // Crescent moon profile drawn via offset arcs
             let pts: Vec<_> = (0..=12)
                 .map(|i| {
                     let a = -0.9 + (i as f32 / 12.0) * 3.6;

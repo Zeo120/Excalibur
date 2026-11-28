@@ -83,9 +83,9 @@ impl DrawerState {
         let mut action = None;
 
         let panel_frame = egui::Frame::NONE
-            .fill(theme::BG_TAB_BAR)
-            .inner_margin(egui::Margin::symmetric(12, 10))
-            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE));
+            .fill(theme::BG_SURFACE)
+            .inner_margin(egui::Margin::symmetric(14, 12))
+            .stroke(egui::Stroke::new(1.0, theme::BORDER_HAIRLINE));
 
         egui::Panel::right("excalibur_drawer")
             .exact_size(320.0)
@@ -99,7 +99,7 @@ impl DrawerState {
                     };
                     ui.label(
                         egui::RichText::new(heading)
-                            .size(14.0)
+                            .size(15.0)
                             .strong()
                             .color(theme::TEXT_PRIMARY),
                     );
@@ -112,9 +112,9 @@ impl DrawerState {
                         }
                     });
                 });
-                ui.add_space(4.0);
-                ui.separator();
                 ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(8.0);
 
                 match active {
                     ActiveDrawer::Bookmarks => {
@@ -148,35 +148,41 @@ impl DrawerState {
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for bm in &self.bookmarks {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_max_width(228.0);
-                        if ui
-                            .selectable_label(false, truncate_text(&bm.title, 28))
-                            .on_hover_text(&bm.url)
-                            .clicked()
-                        {
-                            action = Some(DrawerAction::NavigateActive(bm.url.clone()));
-                        }
-                        ui.label(
-                            egui::RichText::new(truncate_text(&bm.url, 36))
-                                .size(11.0)
-                                .color(theme::TEXT_SECONDARY),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if icon_button(ui, IconKind::Close, true, false, None)
-                            .on_hover_text("Remove bookmark")
-                            .clicked()
-                        {
-                            deleted_url = Some(bm.url.clone());
-                        }
-                        if icon_button(ui, IconKind::Plus, true, false, None)
-                            .on_hover_text("Open in new tab")
-                            .clicked()
-                        {
-                            action = Some(DrawerAction::OpenNewTab(bm.url.clone()));
-                        }
+                let row_frame = egui::Frame::NONE
+                    .fill(theme::BG_PILL)
+                    .corner_radius(egui::CornerRadius::same(7))
+                    .inner_margin(egui::Margin::symmetric(8, 6));
+                row_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_max_width(206.0);
+                            if ui
+                                .selectable_label(false, truncate_text(&bm.title, 26))
+                                .on_hover_text(&bm.url)
+                                .clicked()
+                            {
+                                action = Some(DrawerAction::NavigateActive(bm.url.clone()));
+                            }
+                            ui.label(
+                                egui::RichText::new(truncate_text(&bm.url, 32))
+                                    .size(11.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icon_button(ui, IconKind::Close, true, false, None)
+                                .on_hover_text("Remove bookmark")
+                                .clicked()
+                            {
+                                deleted_url = Some(bm.url.clone());
+                            }
+                            if icon_button(ui, IconKind::Plus, true, false, None)
+                                .on_hover_text("Open in new tab")
+                                .clicked()
+                            {
+                                action = Some(DrawerAction::OpenNewTab(bm.url.clone()));
+                            }
+                        });
                     });
                 });
                 ui.add_space(4.0);
@@ -226,29 +232,35 @@ impl DrawerState {
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for item in &self.history {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_max_width(252.0);
-                        if ui
-                            .selectable_label(false, truncate_text(&item.title, 30))
-                            .on_hover_text(&item.url)
-                            .clicked()
-                        {
-                            action = Some(DrawerAction::NavigateActive(item.url.clone()));
-                        }
-                        ui.label(
-                            egui::RichText::new(truncate_text(&item.url, 40))
-                                .size(11.0)
-                                .color(theme::TEXT_SECONDARY),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if icon_button(ui, IconKind::Plus, true, false, None)
-                            .on_hover_text("Open in new tab")
-                            .clicked()
-                        {
-                            action = Some(DrawerAction::OpenNewTab(item.url.clone()));
-                        }
+                let row_frame = egui::Frame::NONE
+                    .fill(theme::BG_PILL)
+                    .corner_radius(egui::CornerRadius::same(7))
+                    .inner_margin(egui::Margin::symmetric(8, 6));
+                row_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_max_width(232.0);
+                            if ui
+                                .selectable_label(false, truncate_text(&item.title, 28))
+                                .on_hover_text(&item.url)
+                                .clicked()
+                            {
+                                action = Some(DrawerAction::NavigateActive(item.url.clone()));
+                            }
+                            ui.label(
+                                egui::RichText::new(truncate_text(&item.url, 36))
+                                    .size(11.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icon_button(ui, IconKind::Plus, true, false, None)
+                                .on_hover_text("Open in new tab")
+                                .clicked()
+                            {
+                                action = Some(DrawerAction::OpenNewTab(item.url.clone()));
+                            }
+                        });
                     });
                 });
                 ui.add_space(4.0);

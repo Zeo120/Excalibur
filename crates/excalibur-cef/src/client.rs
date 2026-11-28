@@ -9,6 +9,7 @@ pub enum BrowserShortcut {
     NewTab,
     CloseTab,
     FocusOmnibox,
+    ToggleSidebar,
     ToggleBookmark,
     ToggleBookmarksDrawer,
     ToggleHistoryDrawer,
@@ -238,15 +239,20 @@ wrap_keyboard_handler! {
 
             let cmd = (event.modifiers & (ctrl_flag | cmd_flag)) != 0
                 && (event.modifiers & alt_flag) == 0;
+            let alt = (event.modifiers & alt_flag) != 0
+                && (event.modifiers & (ctrl_flag | cmd_flag)) == 0;
             let shift = (event.modifiers & shift_flag) != 0;
 
             let shortcut = if event.windows_key_code == 0x74 {
                 Some(BrowserShortcut::Reload)
+            } else if alt && event.windows_key_code == 0x53 {
+                Some(BrowserShortcut::ToggleSidebar)
             } else if cmd {
                 match event.windows_key_code {
                     0x54 => Some(BrowserShortcut::NewTab),
                     0x57 => Some(BrowserShortcut::CloseTab),
                     0x4C => Some(BrowserShortcut::FocusOmnibox),
+                    0xDC => Some(BrowserShortcut::ToggleSidebar),
                     0x44 => Some(BrowserShortcut::ToggleBookmark),
                     0x42 => Some(BrowserShortcut::ToggleBookmarksDrawer),
                     0x48 => Some(BrowserShortcut::ToggleHistoryDrawer),
