@@ -15,7 +15,7 @@ use excalibur_core::{BrowserConfig, DomainBlocker};
 use raw_window_handle::RawWindowHandle;
 
 use app::{ExcaliburApp, SharedAppState};
-pub use client::{CefEvent, ExcaliburClientHandle};
+pub use client::{BrowserShortcut, CefEvent, ExcaliburClientHandle};
 
 #[cfg(target_os = "macos")]
 pub type CefLibraryGuard = cef::library_loader::LibraryLoader;
@@ -215,6 +215,11 @@ impl CefRuntime {
             .is_some_and(|list| list.iter().any(|h| h.tab_id() == tab_id))
     }
 
+    /// Moves OS keyboard focus back to the parent host window when interacting with browser chrome.
+    pub fn focus_host_window(&self, parent: RawWindowHandle) {
+        focus_native_parent(parent);
+    }
+
     /// Shows or hides the child browser view for `tab_id` and notifies Chromium compositor.
     pub fn set_browser_visible(&self, tab_id: u64, visible: bool) {
         self.with_browser(tab_id, |browser| {
@@ -393,6 +398,24 @@ fn set_native_child_visible(host: &cef::BrowserHost, visible: bool) {
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn focus_native_parent(handle: RawWindowHandle) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
+    if let RawWindowHandle::Win32(win32) = handle {
+        let hwnd = win32.hwnd.get() as *mut std::ffi::c_void;
+        if !hwnd.is_null() {
+            unsafe {
+                if GetFocus() != hwnd {
+                    SetFocus(hwnd);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn focus_native_parent(_handle: RawWindowHandle) {}
 
 #[cfg(not(target_os = "windows"))]
 fn set_native_child_visible(_host: &cef::BrowserHost, _visible: bool) {}

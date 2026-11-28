@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use excalibur_cef::{CefEvent, CefRuntime};
+use excalibur_cef::{BrowserShortcut, CefEvent, CefRuntime};
 use excalibur_core::{
     normalize_url_or_search, sample_process_tree_memory, BrowserConfig, MemorySnapshot, Storage,
     TabManager,
@@ -246,6 +246,12 @@ impl ExcaliburBrowserApp {
                 CefEvent::RequestBlocked { tab_id, .. } => {
                     self.tabs.increment_blocked(tab_id);
                 }
+                CefEvent::OpenPopup { url } => {
+                    self.open_new_tab(url, false);
+                }
+                CefEvent::Shortcut(shortcut) => {
+                    self.execute_shortcut(ctx, shortcut);
+                }
                 CefEvent::BrowserClosed { tab_id } => {
                     self.runtime.prune_closed(tab_id);
                 }
@@ -292,6 +298,55 @@ impl ExcaliburBrowserApp {
         }
     }
 
+    fn execute_shortcut(&mut self, ctx: &egui::Context, shortcut: BrowserShortcut) {
+        match shortcut {
+            BrowserShortcut::NewTab => {
+                self.open_new_tab(self.config.home_url.clone(), true);
+            }
+            BrowserShortcut::CloseTab => {
+                if let Some(active) = self.tabs.active_tab() {
+                    if !active.pinned {
+                        let id = active.id;
+                        self.close_tab(ctx, id);
+                    }
+                }
+            }
+            BrowserShortcut::NextTab => {
+                if let Some(next_id) = self.tabs.cycle_tab(true) {
+                    self.sync_after_cycle(ctx, next_id);
+                }
+            }
+            BrowserShortcut::PrevTab => {
+                if let Some(prev_id) = self.tabs.cycle_tab(false) {
+                    self.sync_after_cycle(ctx, prev_id);
+                }
+            }
+            BrowserShortcut::FocusOmnibox => {
+                self.focus_omnibox_next_frame = true;
+            }
+            BrowserShortcut::ToggleBookmark => {
+                self.toggle_bookmark_active();
+            }
+            BrowserShortcut::ToggleBookmarksDrawer => {
+                self.drawer
+                    .toggle(ActiveDrawer::Bookmarks, &self.storage, &self.config);
+            }
+            BrowserShortcut::ToggleHistoryDrawer => {
+                self.drawer
+                    .toggle(ActiveDrawer::History, &self.storage, &self.config);
+            }
+            BrowserShortcut::Reload => {
+                if let Some(active_id) = self.active_tab_id() {
+                    if self.tabs.tab(active_id).is_some_and(|t| t.is_sleeping) {
+                        self.wake_tab(active_id);
+                    } else {
+                        self.runtime.reload(active_id);
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let (ctrl_t, ctrl_w, ctrl_l, ctrl_d, ctrl_b, ctrl_h, reload_key, tab_fwd, tab_bwd) = ctx
             .input(|i| {
@@ -311,47 +366,30 @@ impl ExcaliburBrowserApp {
             });
 
         if ctrl_t {
-            self.open_new_tab(self.config.home_url.clone(), true);
+            self.execute_shortcut(ctx, BrowserShortcut::NewTab);
         }
         if ctrl_w {
-            if let Some(active) = self.tabs.active_tab() {
-                if !active.pinned {
-                    let id = active.id;
-                    self.close_tab(ctx, id);
-                }
-            }
+            self.execute_shortcut(ctx, BrowserShortcut::CloseTab);
         }
         if tab_fwd {
-            if let Some(next_id) = self.tabs.cycle_tab(true) {
-                self.sync_after_cycle(ctx, next_id);
-            }
+            self.execute_shortcut(ctx, BrowserShortcut::NextTab);
         } else if tab_bwd {
-            if let Some(prev_id) = self.tabs.cycle_tab(false) {
-                self.sync_after_cycle(ctx, prev_id);
-            }
+            self.execute_shortcut(ctx, BrowserShortcut::PrevTab);
         }
         if ctrl_l {
-            self.focus_omnibox_next_frame = true;
+            self.execute_shortcut(ctx, BrowserShortcut::FocusOmnibox);
         }
         if ctrl_d {
-            self.toggle_bookmark_active();
+            self.execute_shortcut(ctx, BrowserShortcut::ToggleBookmark);
         }
         if ctrl_b {
-            self.drawer
-                .toggle(ActiveDrawer::Bookmarks, &self.storage, &self.config);
+            self.execute_shortcut(ctx, BrowserShortcut::ToggleBookmarksDrawer);
         }
         if ctrl_h {
-            self.drawer
-                .toggle(ActiveDrawer::History, &self.storage, &self.config);
+            self.execute_shortcut(ctx, BrowserShortcut::ToggleHistoryDrawer);
         }
         if reload_key {
-            if let Some(active_id) = self.active_tab_id() {
-                if self.tabs.tab(active_id).is_some_and(|t| t.is_sleeping) {
-                    self.wake_tab(active_id);
-                } else {
-                    self.runtime.reload(active_id);
-                }
-            }
+            self.execute_shortcut(ctx, BrowserShortcut::Reload);
         }
     }
 
@@ -553,6 +591,11 @@ impl eframe::App for ExcaliburBrowserApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
+        if ui.input(|i| i.pointer.any_pressed()) || self.focus_omnibox_next_frame {
+            if let Ok(window_handle) = frame.window_handle() {
+                self.runtime.focus_host_window(window_handle.as_raw());
+            }
+        }
         self.show_tab_strip(ui, &ctx);
 
         let (active_id, can_back, can_forward, is_loading, is_sleeping, current_url, tab_blocked) =
@@ -646,19 +689,28 @@ impl eframe::App for ExcaliburBrowserApp {
                         .inner_margin(egui::Margin::symmetric(8, 4))
                         .stroke(egui::Stroke::new(1.0, field_stroke));
                     field_frame.show(ui, |ui| {
-                        let response = ui.add_sized(
-                            [(avail - 16.0).max(80.0), 18.0],
-                            egui::TextEdit::singleline(&mut self.omnibox_text)
-                                .id(self.omnibox_id)
-                                .frame(egui::Frame::NONE)
-                                .hint_text("Search or enter URL (Ctrl+L)"),
-                        );
+                        let mut output = egui::TextEdit::singleline(&mut self.omnibox_text)
+                            .id(self.omnibox_id)
+                            .desired_width((avail - 16.0).max(80.0))
+                            .frame(egui::Frame::NONE)
+                            .hint_text("Search or enter URL (Ctrl+L)")
+                            .show(ui);
                         if self.focus_omnibox_next_frame {
-                            response.request_focus();
+                            output.response.request_focus();
+                            let char_len = self.omnibox_text.chars().count();
+                            output.state.cursor.set_char_range(Some(
+                                egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(char_len),
+                                ),
+                            ));
+                            output.state.store(ui.ctx(), output.response.id);
                             self.focus_omnibox_next_frame = false;
                         }
-                        omnibox_focused = response.has_focus();
-                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        omnibox_focused = output.response.has_focus();
+                        if output.response.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
                             submit_navigation = true;
                         }
                     });

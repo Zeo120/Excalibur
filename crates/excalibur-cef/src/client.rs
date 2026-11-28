@@ -3,6 +3,20 @@ use std::sync::{mpsc::Sender, Arc, Mutex};
 use cef::{rc::Rc, *};
 use excalibur_core::DomainBlocker;
 
+/// Browser-level keyboard shortcuts intercepted before the webview consumes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserShortcut {
+    NewTab,
+    CloseTab,
+    FocusOmnibox,
+    ToggleBookmark,
+    ToggleBookmarksDrawer,
+    ToggleHistoryDrawer,
+    Reload,
+    NextTab,
+    PrevTab,
+}
+
 /// Events emitted from CEF callbacks to the host UI.
 #[derive(Debug, Clone)]
 pub enum CefEvent {
@@ -28,6 +42,10 @@ pub enum CefEvent {
         tab_id: u64,
         host: String,
     },
+    OpenPopup {
+        url: String,
+    },
+    Shortcut(BrowserShortcut),
     BrowserClosed {
         tab_id: u64,
     },
@@ -95,6 +113,10 @@ wrap_client! {
             Some(ExcaliburDisplayHandler::new(self.ctx.clone()))
         }
 
+        fn keyboard_handler(&self) -> Option<KeyboardHandler> {
+            Some(ExcaliburKeyboardHandler::new(self.ctx.clone()))
+        }
+
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(ExcaliburLifeSpanHandler::new(self.ctx.clone()))
         }
@@ -148,6 +170,31 @@ wrap_life_span_handler! {
     }
 
     impl LifeSpanHandler {
+        fn on_before_popup(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _popup_id: ::std::os::raw::c_int,
+            target_url: Option<&CefString>,
+            _target_frame_name: Option<&CefString>,
+            _target_disposition: WindowOpenDisposition,
+            _user_gesture: ::std::os::raw::c_int,
+            _popup_features: Option<&PopupFeatures>,
+            _window_info: Option<&mut WindowInfo>,
+            _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>,
+            _extra_info: Option<&mut Option<DictionaryValue>>,
+            _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            if let Some(url) = target_url.map(CefString::to_string) {
+                if !url.is_empty() {
+                    let _ = self.ctx.event_tx.send(CefEvent::OpenPopup { url });
+                }
+            }
+            // Cancel Chromium's standalone popup window so Excalibur opens it as a managed tab.
+            1
+        }
+
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             self.ctx.handle.set_browser(browser.cloned());
             let _ = self.ctx.event_tx.send(CefEvent::BrowserCreated {
@@ -160,6 +207,66 @@ wrap_life_span_handler! {
             let _ = self.ctx.event_tx.send(CefEvent::BrowserClosed {
                 tab_id: self.ctx.tab_id,
             });
+        }
+    }
+}
+
+wrap_keyboard_handler! {
+    struct ExcaliburKeyboardHandler {
+        ctx: Arc<ClientContext>,
+    }
+
+    impl KeyboardHandler {
+        fn on_pre_key_event(
+            &self,
+            _browser: Option<&mut Browser>,
+            event: Option<&KeyEvent>,
+            _os_event: Option<&mut sys::MSG>,
+            is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            let Some(event) = event else {
+                return 0;
+            };
+            if event.type_ != KeyEventType::RAWKEYDOWN && event.type_ != KeyEventType::KEYDOWN {
+                return 0;
+            }
+
+            let ctrl_flag = sys::cef_event_flags_t::CEF_EVENTFLAG_CONTROL_DOWN.0 as u32;
+            let cmd_flag = sys::cef_event_flags_t::CEF_EVENTFLAG_COMMAND_DOWN.0 as u32;
+            let shift_flag = sys::cef_event_flags_t::CEF_EVENTFLAG_SHIFT_DOWN.0 as u32;
+            let alt_flag = sys::cef_event_flags_t::CEF_EVENTFLAG_ALT_DOWN.0 as u32;
+
+            let cmd = (event.modifiers & (ctrl_flag | cmd_flag)) != 0
+                && (event.modifiers & alt_flag) == 0;
+            let shift = (event.modifiers & shift_flag) != 0;
+
+            let shortcut = if event.windows_key_code == 0x74 {
+                Some(BrowserShortcut::Reload)
+            } else if cmd {
+                match event.windows_key_code {
+                    0x54 => Some(BrowserShortcut::NewTab),
+                    0x57 => Some(BrowserShortcut::CloseTab),
+                    0x4C => Some(BrowserShortcut::FocusOmnibox),
+                    0x44 => Some(BrowserShortcut::ToggleBookmark),
+                    0x42 => Some(BrowserShortcut::ToggleBookmarksDrawer),
+                    0x48 => Some(BrowserShortcut::ToggleHistoryDrawer),
+                    0x52 => Some(BrowserShortcut::Reload),
+                    0x09 if shift => Some(BrowserShortcut::PrevTab),
+                    0x09 => Some(BrowserShortcut::NextTab),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            if let Some(shortcut) = shortcut {
+                if let Some(flag) = is_keyboard_shortcut {
+                    *flag = 1;
+                }
+                let _ = self.ctx.event_tx.send(CefEvent::Shortcut(shortcut));
+                return 1;
+            }
+            0
         }
     }
 }
